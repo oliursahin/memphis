@@ -956,6 +956,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2474,12 +2480,16 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "dotenvy",
  "log",
  "mail-parser",
+ "open",
+ "rand 0.8.5",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tantivy",
  "tauri",
  "tauri-build",
@@ -2491,6 +2501,7 @@ dependencies = [
  "tiny_http",
  "tokio",
  "url",
+ "urlencoding",
  "uuid",
 ]
 
@@ -5478,6 +5489,12 @@ dependencies = [
  "serde",
  "serde_derive",
 ]
+
+[[package]]
+name = "urlencoding"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "urlpattern"
