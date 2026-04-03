@@ -112,15 +112,17 @@ export default function App() {
 
         {/* Border starts below traffic lights, runs to bottom */}
         <div class="flex-1 w-full border-r border-zinc-200/60 flex flex-col items-center">
-          {/* Workspace icon + sub items */}
-          <div class="mt-1 space-y-3">
+          {/* Workspace icon — sub items show on hover */}
+          <div class="mt-1 group/ws">
             <div class="w-8 h-8 rounded-full border border-zinc-200 flex items-center justify-center text-[11px] font-medium text-zinc-400 cursor-pointer hover:border-zinc-300 hover:text-zinc-600 transition-colors mx-auto" title="Workspace">
               OS
             </div>
-            <SidebarIcon icon="done" label="done" />
-            <SidebarIcon icon="sent" label="sent" />
-            <SidebarIcon icon="drafts" label="drafts" />
-            <SidebarIcon icon="bin" label="bin" />
+            <div class="hidden group-hover/ws:flex flex-col items-center space-y-3 mt-3">
+              <SidebarIcon icon="done" label="done" />
+              <SidebarIcon icon="sent" label="sent" />
+              <SidebarIcon icon="drafts" label="drafts" />
+              <SidebarIcon icon="bin" label="bin" />
+            </div>
           </div>
           <div class="flex-1" />
           {/* Shortcuts guide */}
