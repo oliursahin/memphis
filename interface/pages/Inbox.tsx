@@ -2,6 +2,7 @@ import { For, Show } from "solid-js";
 
 export interface ThreadRow {
   id: string;
+  gmailThreadId?: string;
   subject: string;
   snippet: string;
   fromName: string;
@@ -11,122 +12,26 @@ export interface ThreadRow {
   messageCount: number;
 }
 
-export const MOCK_THREADS: ThreadRow[] = [
-  {
-    id: "1", fromName: "Vercel", fromEmail: "notifications@vercel.com",
-    subject: "Failed preview deployment on team 'Oliur Sahin's projects'",
-    snippet: "", date: "5:58 PM", isRead: false, messageCount: 1,
-  },
-  {
-    id: "2", fromName: "Vercel", fromEmail: "notifications@vercel.com",
-    subject: "3 domains need configuration on team 'Oliur Sahin's projects'",
-    snippet: "", date: "12:35 PM", isRead: true, messageCount: 1,
-  },
-  {
-    id: "3", fromName: "Farza from Farza's Newsletter", fromEmail: "farza@newsletter.com",
-    subject: "me and skrillex at the club crying to scatman drinking lychee tea",
-    snippet: "", date: "1:03 AM", isRead: true, messageCount: 1,
-  },
-  {
-    id: "4", fromName: "Sieoud Rizwan", fromEmail: "sieoud@example.com",
-    subject: "Announcing Cline Kanban for multi-agent orchestration",
-    snippet: "", date: "12:02 AM", isRead: true, messageCount: 1,
-  },
-  {
-    id: "5", fromName: "me .. me", fromEmail: "me@example.com",
-    subject: "can't access billing page",
-    snippet: "", date: "Apr 2", isRead: true, messageCount: 6,
-  },
-  {
-    id: "6", fromName: "Dan Koe", fromEmail: "dan@dankoe.com",
-    subject: "I'm begging you to write more essays",
-    snippet: "", date: "Apr 2", isRead: true, messageCount: 1,
-  },
-  {
-    id: "7", fromName: "a]16c speedrun", fromEmail: "speedrun@example.com",
-    subject: "Liquid Death's Mike Cessario on Building a Brand That Can't Be Copied",
-    snippet: "", date: "Apr 2", isRead: true, messageCount: 1,
-  },
-  {
-    id: "8", fromName: "Paul Sangiki-Ferrierie", fromEmail: "paul@example.com",
-    subject: "cubic March update: #1 on Code Review Benchmark, faster reviews & Confluence/Notion",
-    snippet: "", date: "Apr 2", isRead: true, messageCount: 1,
-  },
-  {
-    id: "9", fromName: "Google", fromEmail: "no-reply@google.com",
-    subject: "Security alert",
-    snippet: "", date: "Apr 2", isRead: true, messageCount: 3,
-  },
-  {
-    id: "10", fromName: "Google", fromEmail: "no-reply@google.com",
-    subject: "Security alert for sahin@zestral.ai",
-    snippet: "", date: "Apr 2", isRead: true, messageCount: 1,
-  },
-  {
-    id: "11", fromName: "Sajda Kabir", fromEmail: "sajda@example.com",
-    subject: "https://github.com/InisForge/InisForge/security",
-    snippet: "", date: "Apr 2", isRead: true, messageCount: 1,
-  },
-  {
-    id: "12", fromName: "Superhuman", fromEmail: "team@superhuman.com",
-    subject: "Meet Superhuman Go, the shortcut to done",
-    snippet: "", date: "Apr 1", isRead: true, messageCount: 1,
-  },
-  {
-    id: "13", fromName: "Brian from Small Bets", fromEmail: "brian@smallbets.com",
-    subject: "The IRS basically rewards angel investors... if you know this rule",
-    snippet: "", date: "Apr 1", isRead: true, messageCount: 1,
-  },
-  {
-    id: "14", fromName: "Sajda Kabir", fromEmail: "sajda@example.com",
-    subject: ".md file stuck",
-    snippet: "", date: "Apr 1", isRead: true, messageCount: 1,
-  },
-];
-
-function groupByDate(threads: ThreadRow[]): { label: string; threads: ThreadRow[] }[] {
-  const today: ThreadRow[] = [];
-  const yesterday: ThreadRow[] = [];
-  const lastWeek: ThreadRow[] = [];
-  const older: ThreadRow[] = [];
-
-  for (const t of threads) {
-    const d = t.date.toLowerCase();
-    if (d.includes("pm") || d.includes("am")) {
-      today.push(t);
-    } else if (d === "apr 2") {
-      yesterday.push(t);
-    } else if (d === "apr 1") {
-      lastWeek.push(t);
-    } else {
-      older.push(t);
-    }
-  }
-
-  const groups: { label: string; threads: ThreadRow[] }[] = [];
-  if (today.length) groups.push({ label: "Today", threads: today });
-  if (yesterday.length) groups.push({ label: "Yesterday", threads: yesterday });
-  if (lastWeek.length) groups.push({ label: "Last 7 days", threads: lastWeek });
-  if (older.length) groups.push({ label: "Older", threads: older });
-  return groups;
-}
-
 interface InboxProps {
+  threads: ThreadRow[];
+  loading: boolean;
   onOpenThread: (thread: { id: string; subject: string }) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
 }
 
 export default function Inbox(props: InboxProps) {
-  const groups = () => groupByDate(MOCK_THREADS);
 
   return (
-    <div class="h-full overflow-y-auto pt-3">
-      <For each={groups()}>
-        {(group) => (
-          <div>
-            <For each={group.threads}>
-              {(thread) => (
+    <div class="absolute inset-0 overflow-y-auto pt-3 pb-12">
+      <Show when={!props.loading} fallback={
+        <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading…</div>
+      }>
+      <Show when={props.threads.length > 0} fallback={
+        <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Inbox zero</div>
+      }>
+        <For each={props.threads}>
+          {(thread) => (
                 <div
                   class={`group flex items-center gap-3 px-20 py-2.5 cursor-pointer ${
                     props.selectedId === thread.id
@@ -191,11 +96,10 @@ export default function Inbox(props: InboxProps) {
                     </div>
                   </div>
                 </div>
-              )}
-            </For>
-          </div>
-        )}
-      </For>
+          )}
+        </For>
+      </Show>
+      </Show>
     </div>
   );
 }
