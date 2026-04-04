@@ -263,7 +263,7 @@ export default function CommandBar(props: CommandBarProps) {
   return (
     <div class="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]" onClick={props.onClose}>
       {/* Backdrop */}
-      <div class="absolute inset-0 bg-white/60 backdrop-blur-md" />
+      <div class="absolute inset-0 bg-black/20 backdrop-blur-sm" />
 
       {/* Glassmorphic panel */}
       <div

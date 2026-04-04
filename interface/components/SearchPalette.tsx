@@ -55,7 +55,7 @@ export default function SearchOverlay(props: SearchOverlayProps) {
 
   return (
     <div class="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]" onClick={props.onClose}>
-      <div class="absolute inset-0 bg-white/60 backdrop-blur-md" />
+      <div class="absolute inset-0 bg-black/20 backdrop-blur-sm" />
 
       <div
         class="relative w-full max-w-[480px] bg-white/40 backdrop-blur-2xl backdrop-saturate-150 border border-white/30 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.12),0_2px_8px_rgba(0,0,0,0.06)] overflow-hidden"
