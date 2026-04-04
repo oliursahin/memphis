@@ -118,6 +118,35 @@ impl GmailClient {
         Ok(list)
     }
 
+    /// Fetch attachment data by ID (for large message bodies stored as attachments).
+    pub async fn get_attachment(
+        &self,
+        message_id: &str,
+        attachment_id: &str,
+    ) -> Result<String, Error> {
+        let url = format!("{GMAIL_API}/messages/{message_id}/attachments/{attachment_id}");
+
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.access_token)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::Internal(format!("Gmail attachment {status}: {body}")));
+        }
+
+        #[derive(Deserialize)]
+        struct AttachmentResponse {
+            data: Option<String>,
+        }
+        let att: AttachmentResponse = resp.json().await?;
+        Ok(att.data.unwrap_or_default())
+    }
+
     /// Modify labels on a thread (archive = remove INBOX, etc.)
     pub async fn modify_thread(
         &self,
@@ -210,6 +239,7 @@ pub struct MessagePart {
 pub struct MessageBody {
     pub data: Option<String>,
     pub size: Option<u64>,
+    pub attachment_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -1,8 +1,10 @@
+use base64::engine::general_purpose::{STANDARD, URL_SAFE, URL_SAFE_NO_PAD};
+use base64::Engine;
 use futures::stream::{self, StreamExt};
 use tauri::State;
 
 use crate::error::Error;
-use crate::integrations::gmail::client::GmailClient;
+use crate::integrations::gmail::client::{GmailClient, GmailMessage, MessagePayload, MessagePart};
 use crate::integrations::gmail::oauth;
 use crate::state::AppState;
 
@@ -237,6 +239,263 @@ pub async fn archive_thread(
     client.modify_thread(&thread_id, &[], &["INBOX"]).await?;
     log::info!("Archived thread {thread_id}");
     Ok(())
+}
+
+// ── Thread detail (full message bodies) ──
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadDetail {
+    pub id: String,
+    pub subject: String,
+    pub messages: Vec<MessageDetail>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageDetail {
+    pub id: String,
+    pub from_name: String,
+    pub from_email: String,
+    pub to: String,
+    pub cc: String,
+    pub date: String,
+    pub body_html: String,
+}
+
+/// Fetch a thread with full message bodies from Gmail.
+#[tauri::command]
+pub async fn get_thread_detail(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<ThreadDetail, Error> {
+    let account_id = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        conn.query_row(
+            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|_| Error::Auth("No active account.".into()))?
+    };
+
+    let token = oauth::get_valid_token(&state.db, &account_id).await?;
+    let client = GmailClient::new(token);
+    let thread = client.get_thread_full(&thread_id).await?;
+
+    let messages = thread.messages.unwrap_or_default();
+    let subject = messages
+        .first()
+        .and_then(|m| m.get_header("Subject"))
+        .unwrap_or("(no subject)")
+        .to_string();
+
+    let mut details: Vec<MessageDetail> = Vec::with_capacity(messages.len());
+    for msg in &messages {
+        let from_raw = msg.get_header("From").unwrap_or("");
+        let (from_name, from_email) = parse_from(from_raw);
+
+        let to = msg.get_header("To").unwrap_or("").to_string();
+        let cc = msg.get_header("Cc").unwrap_or("").to_string();
+
+        let date = msg
+            .internal_date
+            .as_ref()
+            .and_then(|d| d.parse::<i64>().ok())
+            .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms))
+            .map(|dt| dt.format("%b %d, %l:%M %p").to_string())
+            .unwrap_or_else(|| {
+                msg.get_header("Date").unwrap_or("").to_string()
+            });
+
+        let body_html = extract_body(msg, &client).await;
+
+        details.push(MessageDetail {
+            id: msg.id.clone(),
+            from_name,
+            from_email,
+            to,
+            cc,
+            date,
+            body_html,
+        });
+    }
+
+    log::info!(
+        "get_thread_detail: {} messages for thread {}",
+        details.len(),
+        thread_id
+    );
+
+    Ok(ThreadDetail {
+        id: thread.id,
+        subject,
+        messages: details,
+    })
+}
+
+/// Extract HTML or plain-text body from a Gmail message, sanitize it.
+/// Fetches large bodies from the attachment endpoint when inline data is missing.
+async fn extract_body(msg: &GmailMessage, client: &GmailClient) -> String {
+    let payload = match &msg.payload {
+        Some(p) => p,
+        None => {
+            log::warn!("Message {} has no payload, using snippet", msg.id);
+            let snippet = msg.snippet.clone().unwrap_or_default();
+            return format!("<p>{}</p>", ammonia::clean(&snippet));
+        }
+    };
+
+    log::info!(
+        "extract_body msg={} mime={} has_body_data={} has_parts={}",
+        msg.id,
+        payload.mime_type.as_deref().unwrap_or("?"),
+        payload.body.as_ref().and_then(|b| b.data.as_ref()).map(|d| d.len()).unwrap_or(0),
+        payload.parts.as_ref().map(|p| p.len()).unwrap_or(0),
+    );
+
+    // Try to find text/html, then text/plain — check parts tree first, then payload body
+    let html = resolve_part_data(payload, "text/html", &msg.id, client).await;
+    let plain = if html.is_some() {
+        None
+    } else {
+        resolve_part_data(payload, "text/plain", &msg.id, client).await
+    };
+
+    if let Some(data) = html {
+        let decoded = decode_base64url(&data);
+        if !decoded.is_empty() {
+            return sanitize_html(&decoded);
+        }
+        log::warn!("HTML body decoded to empty for message {}", msg.id);
+    }
+
+    if let Some(data) = plain {
+        let text = decode_base64url(&data);
+        if !text.is_empty() {
+            // Escape HTML entities and wrap — no need to run through sanitize_html
+            // since we're producing the HTML ourselves from plain text
+            let escaped = text
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('\n', "<br>");
+            return format!("<div style=\"white-space:pre-wrap;word-break:break-word\">{escaped}</div>");
+        }
+        log::warn!("Plain text body decoded to empty for message {}", msg.id);
+    }
+
+    // Last resort: use the snippet (already HTML-safe from Gmail)
+    log::warn!(
+        "No body found for message {}, mime={}, using snippet",
+        msg.id,
+        payload.mime_type.as_deref().unwrap_or("?")
+    );
+    let snippet = msg.snippet.clone().unwrap_or_default();
+    format!("<p>{}</p>", ammonia::clean(&snippet))
+}
+
+/// Look for a MIME type in parts tree, then payload body. If body has an
+/// attachmentId instead of inline data, fetch it from the Gmail attachment API.
+async fn resolve_part_data(
+    payload: &MessagePayload,
+    mime_type: &str,
+    message_id: &str,
+    client: &GmailClient,
+) -> Option<String> {
+    // 1. Search recursively in parts
+    if let Some(found) = find_part_data_or_attachment(payload.parts.as_deref(), mime_type) {
+        return match found {
+            PartData::Inline(data) => Some(data),
+            PartData::AttachmentId(aid) => {
+                client.get_attachment(message_id, &aid).await.ok()
+            }
+        };
+    }
+
+    // 2. Check the payload body directly (non-multipart messages)
+    if payload.mime_type.as_deref() == Some(mime_type) {
+        if let Some(body) = &payload.body {
+            if let Some(data) = &body.data {
+                if !data.is_empty() {
+                    return Some(data.clone());
+                }
+            }
+            if let Some(aid) = &body.attachment_id {
+                return client.get_attachment(message_id, aid).await.ok();
+            }
+        }
+    }
+
+    None
+}
+
+enum PartData {
+    Inline(String),
+    AttachmentId(String),
+}
+
+/// Recursively find a MIME part by type, returning either inline data or attachment ID.
+fn find_part_data_or_attachment(parts: Option<&[MessagePart]>, mime_type: &str) -> Option<PartData> {
+    let parts = parts?;
+    for part in parts {
+        if part.mime_type.as_deref() == Some(mime_type) {
+            if let Some(body) = &part.body {
+                if let Some(data) = &body.data {
+                    if !data.is_empty() {
+                        return Some(PartData::Inline(data.clone()));
+                    }
+                }
+                if let Some(aid) = &body.attachment_id {
+                    return Some(PartData::AttachmentId(aid.clone()));
+                }
+            }
+        }
+        // Recurse into nested parts (multipart/alternative, multipart/related, etc.)
+        if let Some(found) = find_part_data_or_attachment(part.parts.as_deref(), mime_type) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Decode Gmail's base64url-encoded body data.
+/// Tries URL-safe no-pad first, then URL-safe with pad, then standard base64.
+fn decode_base64url(data: &str) -> String {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(data)
+        .or_else(|_| URL_SAFE.decode(data))
+        .or_else(|_| STANDARD.decode(data))
+        .unwrap_or_else(|e| {
+            log::warn!("Base64 decode failed (len={}): {e}", data.len());
+            Vec::new()
+        });
+    String::from_utf8(bytes).unwrap_or_else(|e| {
+        log::warn!("UTF-8 decode failed: {e}");
+        String::new()
+    })
+}
+
+fn sanitize_html(raw: &str) -> String {
+    ammonia::Builder::default()
+        .add_tag_attributes("a", &["href", "style"])
+        .add_tag_attributes("img", &["src", "alt", "width", "height", "style"])
+        .add_tag_attributes("p", &["style"])
+        .add_tag_attributes("div", &["style", "dir"])
+        .add_tag_attributes("span", &["style", "dir"])
+        .add_tag_attributes("td", &["style", "colspan", "rowspan", "width", "align", "valign"])
+        .add_tag_attributes("th", &["style", "colspan", "rowspan", "width", "align", "valign"])
+        .add_tag_attributes("table", &["style", "width", "cellpadding", "cellspacing", "border"])
+        .add_tag_attributes("tr", &["style"])
+        .add_tag_attributes("font", &["color", "size", "face"])
+        .add_tags(&["table", "thead", "tbody", "tr", "td", "th", "font", "center", "hr", "br"])
+        .link_rel(Some("noopener noreferrer"))
+        .url_relative(ammonia::UrlRelative::Deny)
+        .clean(raw)
+        .to_string()
 }
 
 /// Parse "Name <email>" or "email" format.

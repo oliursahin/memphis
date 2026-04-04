@@ -69,6 +69,7 @@ pub fn run() {
             commands::inbox::list_inbox,
             commands::inbox::get_unread_counts,
             commands::inbox::archive_thread,
+            commands::inbox::get_thread_detail,
             commands::labels::list_labels,
             commands::settings::save_splits,
             commands::settings::get_splits,
