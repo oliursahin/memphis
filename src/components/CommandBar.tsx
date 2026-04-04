@@ -14,14 +14,53 @@ interface CommandBarProps {
 }
 
 const COMMANDS: Command[] = [
+  // Actions — email operations
+  { id: "compose", label: "Compose new email", shortcut: "C", section: "Actions", icon: "edit" },
+  { id: "reply", label: "Reply", shortcut: "R", section: "Actions", icon: "reply" },
+  { id: "reply-all", label: "Reply all", shortcut: "⇧R", section: "Actions", icon: "reply" },
+  { id: "forward", label: "Forward", shortcut: "F", section: "Actions", icon: "forward" },
+  { id: "archive", label: "Archive", shortcut: "E", section: "Actions", icon: "archive" },
+  { id: "mark-done", label: "Mark as done", shortcut: "E", section: "Actions", icon: "done" },
+  { id: "mark-unread", label: "Mark as unread", shortcut: "U", section: "Actions", icon: "mail" },
+  { id: "star", label: "Star / unstar", shortcut: "S", section: "Actions", icon: "star" },
+  { id: "remind", label: "Set reminder", shortcut: "H", section: "Actions", icon: "remind" },
+  { id: "snooze", label: "Snooze", section: "Actions", icon: "remind" },
+  { id: "trash", label: "Move to trash", shortcut: "#", section: "Actions", icon: "trash" },
+  { id: "spam", label: "Report spam", shortcut: "!", section: "Actions", icon: "spam" },
+  { id: "mute", label: "Mute thread", shortcut: "M", section: "Actions", icon: "mute" },
+  { id: "pin", label: "Pin to top", section: "Actions", icon: "pin" },
+  { id: "search", label: "Search emails", shortcut: "/", section: "Actions", icon: "search" },
+  // Organize — splits, labels, filters
+  { id: "create-split", label: "Create new split", section: "Organize", icon: "split" },
+  { id: "edit-splits", label: "Edit splits", section: "Organize", icon: "split" },
+  { id: "create-label", label: "Create new label", section: "Organize", icon: "label" },
+  { id: "apply-label", label: "Apply label to conversation", shortcut: "L", section: "Organize", icon: "label" },
+  { id: "remove-label", label: "Remove label", section: "Organize", icon: "label" },
+  { id: "move-to", label: "Move to…", shortcut: "V", section: "Organize", icon: "move" },
+  { id: "create-filter", label: "Create filter from sender", section: "Organize", icon: "filter" },
+  { id: "block-sender", label: "Block sender", section: "Organize", icon: "block" },
+  { id: "unsubscribe", label: "Unsubscribe", section: "Organize", icon: "unsubscribe" },
+  // Navigation
   { id: "inbox", label: "Go to Inbox", shortcut: "G I", section: "Navigation", icon: "inbox" },
   { id: "sent", label: "Go to Sent", shortcut: "G S", section: "Navigation", icon: "send" },
   { id: "drafts", label: "Go to Drafts", shortcut: "G D", section: "Navigation", icon: "file" },
+  { id: "starred", label: "Go to Starred", shortcut: "G T", section: "Navigation", icon: "star" },
+  { id: "done", label: "Go to Done", section: "Navigation", icon: "done" },
   { id: "all", label: "Go to All Mail", section: "Navigation", icon: "mail" },
+  { id: "spam-folder", label: "Go to Spam", section: "Navigation", icon: "spam" },
+  { id: "trash-folder", label: "Go to Trash", section: "Navigation", icon: "trash" },
   { id: "settings", label: "Go to Settings", section: "Navigation", icon: "settings" },
-  { id: "compose", label: "Compose new email", shortcut: "C", section: "Actions", icon: "edit" },
-  { id: "search", label: "Search emails", shortcut: "/", section: "Actions", icon: "search" },
-  { id: "shortcuts", label: "Show keyboard shortcuts", shortcut: "?", section: "Help", icon: "help" },
+  // Snippets
+  { id: "snippet-thanks", label: "Insert: Thanks for getting back to me…", section: "Snippets", icon: "snippet" },
+  { id: "snippet-followup", label: "Insert: Just following up on this…", section: "Snippets", icon: "snippet" },
+  { id: "snippet-intro", label: "Insert: I'd like to introduce you to…", section: "Snippets", icon: "snippet" },
+  { id: "manage-snippets", label: "Manage snippets", section: "Snippets", icon: "settings" },
+  // Other
+  { id: "shortcuts", label: "Show keyboard shortcuts", shortcut: "?", section: "Other", icon: "help" },
+  { id: "account", label: "Switch account", section: "Other", icon: "account" },
+  { id: "feedback", label: "Send feedback", section: "Other", icon: "feedback" },
+  { id: "download-eml", label: "Download as .eml", section: "Other", icon: "download" },
+  { id: "print", label: "Print conversation", shortcut: "⌘P", section: "Other", icon: "print" },
 ];
 
 function CommandIcon(props: { name: string }) {
@@ -65,6 +104,111 @@ function CommandIcon(props: { name: string }) {
     help: () => (
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" />
+      </svg>
+    ),
+    reply: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 17 4 12 9 7" /><path d="M20 18v-2a4 4 0 00-4-4H4" />
+      </svg>
+    ),
+    archive: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" />
+      </svg>
+    ),
+    remind: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+      </svg>
+    ),
+    snippet: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
+      </svg>
+    ),
+    forward: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 17 20 12 15 7" /><path d="M4 18v-2a4 4 0 014-4h12" />
+      </svg>
+    ),
+    done: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+    ),
+    star: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+      </svg>
+    ),
+    trash: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+      </svg>
+    ),
+    spam: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
+    ),
+    mute: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="1" y1="1" x2="23" y2="23" /><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" /><path d="M17 16.95A7 7 0 015 12" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" />
+      </svg>
+    ),
+    pin: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 17v5" /><path d="M5 17h14v-1.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V6h1a2 2 0 000-4H8a2 2 0 000 4h1v4.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24z" />
+      </svg>
+    ),
+    split: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="12" y1="3" x2="12" y2="21" />
+      </svg>
+    ),
+    label: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z" /><line x1="7" y1="7" x2="7.01" y2="7" />
+      </svg>
+    ),
+    move: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
+      </svg>
+    ),
+    filter: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+      </svg>
+    ),
+    block: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10" /><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+      </svg>
+    ),
+    unsubscribe: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18.36 6.64A9 9 0 015.64 19.36 9 9 0 0118.36 6.64z" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
+    ),
+    account: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" />
+      </svg>
+    ),
+    feedback: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+      </svg>
+    ),
+    download: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+      </svg>
+    ),
+    print: () => (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2" /><rect x="6" y="14" width="12" height="8" />
       </svg>
     ),
   };
