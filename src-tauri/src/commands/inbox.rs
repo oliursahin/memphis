@@ -714,8 +714,8 @@ pub async fn send_email(
          \r\n\
          {html_b64}\r\n\
          --{boundary}--",
-        plain_b64 = URL_SAFE_NO_PAD.encode(body_plain.as_bytes()),
-        html_b64 = URL_SAFE_NO_PAD.encode(body_html.as_bytes()),
+         plain_b64 = STANDARD.encode(body_plain.as_bytes()),
+         html_b64 = STANDARD.encode(body_html.as_bytes()),
     );
 
     let encoded = URL_SAFE_NO_PAD.encode(raw_message.as_bytes());
