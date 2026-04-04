@@ -23,7 +23,7 @@ export default function ComposeView(props: ComposeViewProps) {
 
     try {
       await invoke("send_email", {
-        to: to(),
+        to: to().trim(),
         cc: cc().trim() || null,
         bcc: bcc().trim() || null,
         subject: subject(),
