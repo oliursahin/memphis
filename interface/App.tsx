@@ -695,6 +695,7 @@ export default function App() {
                 onSelect={selectAndOpen}
                 onOpenThread={(t) => setOpenThread(t)}
                 onArchive={archiveThread}
+                onTrash={trashThread}
               />
             }>
               {(thread) => (

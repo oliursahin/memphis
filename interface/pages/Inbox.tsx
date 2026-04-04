@@ -19,6 +19,7 @@ interface InboxProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onArchive: (threadId: string) => void;
+  onTrash: (threadId: string) => void;
 }
 
 export default function Inbox(props: InboxProps) {
@@ -67,31 +68,14 @@ export default function Inbox(props: InboxProps) {
                       {thread.date}
                     </div>
                     <div class="absolute inset-0 flex items-center justify-end invisible group-hover:visible" onClick={(e) => e.stopPropagation()}>
-                    <button class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Star (s)">
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M8 1.5l1.85 3.75L14 5.9l-3 2.93.71 4.12L8 10.88l-3.71 2.07.71-4.12-3-2.93 4.15-.65z" />
-                      </svg>
-                    </button>
                     <button onClick={() => props.onArchive(thread.id)} class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Done (e)">
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M3.5 8l3 3 6-6" />
                       </svg>
                     </button>
-                    <button class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Trash (d)">
+                    <button onClick={() => props.onTrash(thread.id)} class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Trash (#)">
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4M12.67 4v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4" />
-                      </svg>
-                    </button>
-                    <button class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Unread (u)">
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="2" y="3" width="12" height="10" rx="1.5" />
-                        <path d="M2 4.5l6 4 6-4" />
-                      </svg>
-                    </button>
-                    <button class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Remind (h)">
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="8" cy="8" r="6" />
-                        <path d="M8 5v3l2 2" />
                       </svg>
                     </button>
                     </div>

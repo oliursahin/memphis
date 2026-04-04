@@ -57,35 +57,19 @@ export default function ComposeView(props: ComposeViewProps) {
             <path d="M10 12L6 8l4-4" />
           </svg>
         </button>
-        <span class="text-[13px] text-zinc-400">New Message</span>
-
-        <div class="flex-1" />
-
-        <Show when={sendError()}>
-          <span class="text-[12px] text-red-500 mr-2">{sendError()}</span>
-        </Show>
-        <span class="text-[11px] text-zinc-400 mr-3">
-          ⌘ Enter to send · Esc to discard
-        </span>
-        <button
-          onClick={handleSend}
-          disabled={sending() || !to().trim() || !body().trim()}
-          class="px-3 py-1 rounded-md border border-zinc-200 text-[12px] text-zinc-500 hover:text-zinc-800 hover:border-zinc-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
-        >
-          {sending() ? "Sending..." : "Send"}
-        </button>
       </div>
 
       {/* Compose area */}
       <div class="flex-1 flex flex-col overflow-y-auto px-20">
+        <span class="text-[13px] text-zinc-600 mb-2">New Message</span>
         {/* To */}
-        <div class="flex items-center gap-3 py-2 flex-shrink-0">
-          <label class="text-[13px] text-zinc-400 w-10">To</label>
+        <div class="flex items-center gap-2 py-2 flex-shrink-0">
+          <span class="text-[13px] text-zinc-600 flex-shrink-0">To</span>
           <input
             type="text"
             value={to()}
             onInput={(e) => setTo(e.currentTarget.value)}
-            class="flex-1 bg-transparent text-[14px] text-zinc-800 outline-none placeholder:text-zinc-300"
+            class="bg-transparent text-[13px] text-black outline-none placeholder:text-zinc-400"
             placeholder="recipient@example.com"
             autofocus
           />
@@ -105,23 +89,23 @@ export default function ComposeView(props: ComposeViewProps) {
         </div>
 
         <Show when={showCc()}>
-          <div class="flex items-center gap-3 py-2 flex-shrink-0">
-            <label class="text-[13px] text-zinc-400 w-10">Cc</label>
+          <div class="flex items-center gap-2 py-2 flex-shrink-0">
+            <span class="text-[13px] text-zinc-600 flex-shrink-0">Cc</span>
             <input
               type="text"
               value={cc()}
               onInput={(e) => setCc(e.currentTarget.value)}
-              class="flex-1 bg-transparent text-[14px] text-zinc-800 outline-none placeholder:text-zinc-300"
+              class="flex-1 bg-transparent text-[13px] text-black outline-none placeholder:text-zinc-400"
               placeholder="cc@example.com"
             />
           </div>
-          <div class="flex items-center gap-3 py-2 flex-shrink-0">
-            <label class="text-[13px] text-zinc-400 w-10">Bcc</label>
+          <div class="flex items-center gap-2 py-2 flex-shrink-0">
+            <span class="text-[13px] text-zinc-600 flex-shrink-0">Bcc</span>
             <input
               type="text"
               value={bcc()}
               onInput={(e) => setBcc(e.currentTarget.value)}
-              class="flex-1 bg-transparent text-[14px] text-zinc-800 outline-none placeholder:text-zinc-300"
+              class="flex-1 bg-transparent text-[13px] text-black outline-none placeholder:text-zinc-400"
               placeholder="bcc@example.com"
             />
           </div>
@@ -133,7 +117,7 @@ export default function ComposeView(props: ComposeViewProps) {
             type="text"
             value={subject()}
             onInput={(e) => setSubject(e.currentTarget.value)}
-            class="w-full bg-transparent text-[20px] font-semibold text-zinc-900 outline-none placeholder:text-zinc-300"
+            class="w-full bg-transparent text-[14px] font-medium text-black outline-none placeholder:text-zinc-400"
             placeholder="Subject"
           />
         </div>
@@ -142,18 +126,29 @@ export default function ComposeView(props: ComposeViewProps) {
         <textarea
           value={body()}
           onInput={(e) => setBody(e.currentTarget.value)}
-          class="flex-1 min-h-[200px] mt-4 bg-transparent text-[14px] text-zinc-800 leading-[1.7] outline-none resize-none placeholder:text-zinc-300 disabled:opacity-50"
+          class="flex-1 min-h-[200px] mt-2 bg-transparent text-[14px] text-black leading-[1.7] outline-none resize-none placeholder:text-zinc-400 disabled:opacity-50"
           placeholder="Write your message..."
           disabled={sending()}
         />
 
-        {/* Signature preview */}
-        <div class="flex-shrink-0 pb-6 pt-2">
-          <div class="text-[13px] text-zinc-400 leading-relaxed">
-            ---<br />
-            Sent with Memphis
-          </div>
-        </div>
+      </div>
+
+      {/* Footer — fixed at bottom */}
+      <div class="flex-shrink-0 px-20 py-3 flex items-center gap-3">
+        <Show when={sendError()}>
+          <span class="text-[12px] text-red-500">{sendError()}</span>
+        </Show>
+        <div class="flex-1" />
+        <span class="text-[11px] text-zinc-400">
+          ⌘ Enter to send · Esc to discard
+        </span>
+        <button
+          onClick={handleSend}
+          disabled={sending() || !to().trim() || !body().trim()}
+          class="px-3 py-1 rounded-md border border-zinc-200 text-[12px] text-zinc-500 hover:text-black hover:border-zinc-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+        >
+          {sending() ? "Sending..." : "Send"}
+        </button>
       </div>
     </div>
   );
