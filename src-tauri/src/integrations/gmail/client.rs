@@ -17,6 +17,30 @@ impl GmailClient {
         }
     }
 
+    // ── Internal helpers ──
+
+    async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<T, Error> {
+        let resp = self.http.get(url).bearer_auth(&self.access_token).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::Internal(format!("Gmail API {status}: {body}")));
+        }
+        Ok(resp.json().await?)
+    }
+
+    async fn post_json(&self, url: &str, body: &impl serde::Serialize) -> Result<(), Error> {
+        let resp = self.http.post(url).bearer_auth(&self.access_token).json(body).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Error::Internal(format!("Gmail API {status}: {text}")));
+        }
+        Ok(())
+    }
+
+    // ── Public API ──
+
     /// List threads in the user's mailbox.
     pub async fn list_threads(
         &self,
@@ -38,84 +62,25 @@ impl GmailClient {
             }
         }
 
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.access_token)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(Error::Internal(format!("Gmail API {status}: {body}")));
-        }
-
-        let list: ThreadListResponse = resp.json().await?;
-        Ok(list)
+        self.get_json(&url).await
     }
 
     /// Get a single thread with all messages (metadata format for speed).
     pub async fn get_thread(&self, thread_id: &str) -> Result<GmailThread, Error> {
         let url = format!("{GMAIL_API}/threads/{thread_id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date");
-
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.access_token)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(Error::Internal(format!("Gmail API {status}: {body}")));
-        }
-
-        let thread: GmailThread = resp.json().await?;
-        Ok(thread)
+        self.get_json(&url).await
     }
 
     /// Get a single thread with full message bodies.
     pub async fn get_thread_full(&self, thread_id: &str) -> Result<GmailThread, Error> {
         let url = format!("{GMAIL_API}/threads/{thread_id}?format=full");
-
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.access_token)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(Error::Internal(format!("Gmail API {status}: {body}")));
-        }
-
-        let thread: GmailThread = resp.json().await?;
-        Ok(thread)
+        self.get_json(&url).await
     }
 
     /// List all labels in the user's mailbox.
     pub async fn list_labels(&self) -> Result<LabelListResponse, Error> {
         let url = format!("{GMAIL_API}/labels");
-
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.access_token)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(Error::Internal(format!("Gmail API {status}: {body}")));
-        }
-
-        let list: LabelListResponse = resp.json().await?;
-        Ok(list)
+        self.get_json(&url).await
     }
 
     /// Fetch attachment data by ID (for large message bodies stored as attachments).
@@ -126,48 +91,19 @@ impl GmailClient {
     ) -> Result<String, Error> {
         let url = format!("{GMAIL_API}/messages/{message_id}/attachments/{attachment_id}");
 
-        let resp = self
-            .http
-            .get(&url)
-            .bearer_auth(&self.access_token)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(Error::Internal(format!("Gmail attachment {status}: {body}")));
-        }
-
         #[derive(Deserialize)]
         struct AttachmentResponse {
             data: Option<String>,
         }
-        let att: AttachmentResponse = resp.json().await?;
+        let att: AttachmentResponse = self.get_json(&url).await?;
         Ok(att.data.unwrap_or_default())
     }
 
     /// Send a raw RFC 2822 email message (base64url-encoded).
     pub async fn send_message(&self, raw: &str) -> Result<(), Error> {
         let url = format!("{GMAIL_API}/messages/send");
-
         let body = serde_json::json!({ "raw": raw });
-
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.access_token)
-            .json(&body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(Error::Internal(format!("Gmail send {status}: {body}")));
-        }
-
-        Ok(())
+        self.post_json(&url, &body).await
     }
 
     /// Modify labels on a thread (archive = remove INBOX, etc.)
@@ -178,27 +114,11 @@ impl GmailClient {
         remove_labels: &[&str],
     ) -> Result<(), Error> {
         let url = format!("{GMAIL_API}/threads/{thread_id}/modify");
-
         let body = serde_json::json!({
             "addLabelIds": add_labels,
             "removeLabelIds": remove_labels,
         });
-
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.access_token)
-            .json(&body)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(Error::Internal(format!("Gmail modify {status}: {body}")));
-        }
-
-        Ok(())
+        self.post_json(&url, &body).await
     }
 }
 
