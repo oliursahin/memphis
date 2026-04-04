@@ -337,6 +337,19 @@ export default function App() {
     // Find the thread before removing so we can add it to done
     const archivedThread = threads().find((t) => t.id === threadId);
 
+    // Compute the next thread BEFORE removing from cache
+    const currentIds = threadIds();
+    const currentIdx = currentIds.indexOf(threadId);
+    let nextThread: { id: string; subject: string } | null = null;
+    if (currentIdx >= 0) {
+      // Prefer next, then previous
+      const nextId = currentIds[currentIdx + 1] ?? currentIds[currentIdx - 1];
+      if (nextId) {
+        const t = threads().find((th) => th.id === nextId);
+        if (t) nextThread = { id: t.id, subject: t.subject };
+      }
+    }
+
     // Optimistic: remove from all split caches immediately
     setSplitThreads((prev) => {
       const next: Record<string, ThreadRow[]> = {};
@@ -351,21 +364,24 @@ export default function App() {
       setDoneThreads((prev) => [archivedThread, ...prev]);
     }
 
-    // If viewing this thread, go back to list and advance selection
+    // If viewing this thread, advance to next thread (stay in thread view)
     if (openThread()?.id === threadId) {
-      setOpenThread(null);
       setInlineReply(false);
-    }
-
-    // Advance selection to next thread
-    const ids = threadIds();
-    const idx = ids.indexOf(threadId);
-    if (idx >= 0 && idx < ids.length) {
-      setSelectedId(ids[idx]);
-    } else if (ids.length > 0) {
-      setSelectedId(ids[ids.length - 1]);
+      if (nextThread) {
+        setOpenThread(nextThread);
+        setSelectedId(nextThread.id);
+      } else {
+        // No more threads — go back to list
+        setOpenThread(null);
+        setSelectedId(null);
+      }
     } else {
-      setSelectedId(null);
+      // Not viewing — just advance selection in list
+      if (nextThread) {
+        setSelectedId(nextThread.id);
+      } else {
+        setSelectedId(null);
+      }
     }
 
     // Fire API call in background
