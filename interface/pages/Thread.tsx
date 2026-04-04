@@ -359,7 +359,7 @@ export default function ThreadView(props: ThreadViewProps) {
               <div class="flex-1" />
               <div class="flex items-center gap-3">
                 <button
-                  disabled={sending() || !replyBody().trim()}
+                  disabled={sending() || !replyBody().trim() || !replyTo().trim()}
                   class="text-[12px] text-zinc-500 hover:text-zinc-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium flex items-center gap-1.5"
                   title="Schedule send"
                 >
