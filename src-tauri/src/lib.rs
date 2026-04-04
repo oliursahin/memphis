@@ -65,7 +65,14 @@ pub fn run() {
             commands::auth::start_oauth_flow,
             commands::auth::get_accounts,
             commands::auth::has_accounts,
+            commands::auth::logout,
             commands::inbox::list_inbox,
+            commands::inbox::get_unread_counts,
+            commands::labels::list_labels,
+            commands::settings::save_splits,
+            commands::settings::get_splits,
+            commands::settings::save_setting,
+            commands::settings::get_setting,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
