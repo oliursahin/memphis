@@ -3,6 +3,7 @@ use serde::Deserialize;
 
 const GMAIL_API: &str = "https://www.googleapis.com/gmail/v1/users/me";
 
+#[derive(Clone)]
 pub struct GmailClient {
     http: reqwest::Client,
     access_token: String,
@@ -22,6 +23,7 @@ impl GmailClient {
         query: Option<&str>,
         max_results: u32,
         page_token: Option<&str>,
+        label_ids: Option<&[&str]>,
     ) -> Result<ThreadListResponse, Error> {
         let mut url = format!("{GMAIL_API}/threads?maxResults={max_results}");
         if let Some(q) = query {
@@ -29,6 +31,11 @@ impl GmailClient {
         }
         if let Some(pt) = page_token {
             url.push_str(&format!("&pageToken={pt}"));
+        }
+        if let Some(ids) = label_ids {
+            for id in ids {
+                url.push_str(&format!("&labelIds={id}"));
+            }
         }
 
         let resp = self
@@ -88,6 +95,27 @@ impl GmailClient {
 
         let thread: GmailThread = resp.json().await?;
         Ok(thread)
+    }
+
+    /// List all labels in the user's mailbox.
+    pub async fn list_labels(&self) -> Result<LabelListResponse, Error> {
+        let url = format!("{GMAIL_API}/labels");
+
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.access_token)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::Internal(format!("Gmail API {status}: {body}")));
+        }
+
+        let list: LabelListResponse = resp.json().await?;
+        Ok(list)
     }
 
     /// Modify labels on a thread (archive = remove INBOX, etc.)
@@ -188,6 +216,22 @@ pub struct MessageBody {
 pub struct Header {
     pub name: String,
     pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LabelListResponse {
+    pub labels: Option<Vec<GmailLabel>>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GmailLabel {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub r#type: Option<String>,
+    pub message_list_visibility: Option<String>,
+    pub label_list_visibility: Option<String>,
 }
 
 impl GmailMessage {

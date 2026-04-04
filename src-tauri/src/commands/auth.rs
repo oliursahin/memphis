@@ -60,3 +60,12 @@ pub async fn has_accounts(state: State<'_, AppState>) -> Result<bool, Error> {
     )?;
     Ok(count > 0)
 }
+
+#[tauri::command]
+pub async fn logout(state: State<'_, AppState>) -> Result<(), Error> {
+    let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+    conn.execute("DELETE FROM oauth_tokens", [])?;
+    conn.execute("DELETE FROM accounts", [])?;
+    log::info!("All accounts logged out");
+    Ok(())
+}

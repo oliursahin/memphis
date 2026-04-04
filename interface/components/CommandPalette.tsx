@@ -57,7 +57,7 @@ const COMMANDS: Command[] = [
   { id: "manage-snippets", label: "Manage snippets", section: "Snippets", icon: "settings" },
   // Other
   { id: "shortcuts", label: "Show keyboard shortcuts", shortcut: "?", section: "Other", icon: "help" },
-  { id: "account", label: "Switch account", section: "Other", icon: "account" },
+  { id: "account", label: "Log out", section: "Other", icon: "account" },
   { id: "feedback", label: "Send feedback", section: "Other", icon: "feedback" },
   { id: "download-eml", label: "Download as .eml", section: "Other", icon: "download" },
   { id: "print", label: "Print conversation", shortcut: "⌘P", section: "Other", icon: "print" },

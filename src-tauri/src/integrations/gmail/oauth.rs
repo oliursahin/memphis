@@ -46,12 +46,8 @@ fn code_challenge(verifier: &str) -> String {
 /// Start the OAuth flow: spawn a localhost callback server, return the auth URL.
 /// Returns (auth_url, port, code_verifier) — the caller opens the URL in a browser.
 pub fn build_auth_url(config: &OAuthConfig) -> Result<(String, u16, String), Error> {
-    // Find an available port
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| Error::Internal(format!("Failed to bind port: {e}")))?;
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-
+    // Fixed port for OAuth callback — must match Google Cloud Console redirect URI
+    let port: u16 = 8923;
     let redirect_uri = format!("http://127.0.0.1:{port}");
     let verifier = generate_code_verifier();
     let challenge = code_challenge(&verifier);
