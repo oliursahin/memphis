@@ -70,6 +70,7 @@ pub fn run() {
             commands::inbox::get_unread_counts,
             commands::inbox::archive_thread,
             commands::inbox::get_thread_detail,
+            commands::inbox::send_reply,
             commands::labels::list_labels,
             commands::settings::save_splits,
             commands::settings::get_splits,

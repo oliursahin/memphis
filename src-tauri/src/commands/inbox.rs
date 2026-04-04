@@ -498,6 +498,100 @@ fn sanitize_html(raw: &str) -> String {
         .to_string()
 }
 
+/// Send a reply to the last message in a thread.
+#[tauri::command]
+pub async fn send_reply(
+    state: State<'_, AppState>,
+    thread_id: String,
+    message_id: String,
+    to: String,
+    cc: Option<String>,
+    bcc: Option<String>,
+    subject: String,
+    body: String,
+) -> Result<(), Error> {
+    let (account_id, from_email, from_name) = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        let row: (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT id, email, display_name FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|_| Error::Auth("No active account.".into()))?;
+        row
+    };
+
+    let token = oauth::get_valid_token(&state.db, &account_id).await?;
+    let client = GmailClient::new(token);
+
+    // Build RFC 2822 message
+    let from_display = from_name.unwrap_or_else(|| from_email.clone());
+    let date = chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S %z").to_string();
+
+    // Escape body for plain text, and produce a simple HTML version
+    let body_plain = body.clone();
+    let body_html = body
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\n', "<br>");
+
+    let boundary = format!("----=_Part_{}", uuid::Uuid::new_v4().as_simple());
+
+    // Build headers, conditionally adding Cc and Bcc
+    let mut headers = format!(
+        "From: {from_display} <{from_email}>\r\n\
+         To: {to}\r\n"
+    );
+    if let Some(cc_val) = &cc {
+        if !cc_val.trim().is_empty() {
+            headers.push_str(&format!("Cc: {cc_val}\r\n"));
+        }
+    }
+    if let Some(bcc_val) = &bcc {
+        if !bcc_val.trim().is_empty() {
+            headers.push_str(&format!("Bcc: {bcc_val}\r\n"));
+        }
+    }
+    headers.push_str(&format!(
+        "Subject: {subject}\r\n\
+         In-Reply-To: <{message_id}>\r\n\
+         References: <{message_id}>\r\n\
+         Date: {date}\r\n\
+         MIME-Version: 1.0\r\n\
+         Content-Type: multipart/alternative; boundary=\"{boundary}\"\r\n"
+    ));
+
+    let raw_message = format!(
+        "{headers}\r\n\
+         --{boundary}\r\n\
+         Content-Type: text/plain; charset=UTF-8\r\n\
+         Content-Transfer-Encoding: base64\r\n\
+         \r\n\
+         {plain_b64}\r\n\
+         --{boundary}\r\n\
+         Content-Type: text/html; charset=UTF-8\r\n\
+         Content-Transfer-Encoding: base64\r\n\
+         \r\n\
+         {html_b64}\r\n\
+         --{boundary}--",
+        plain_b64 = URL_SAFE_NO_PAD.encode(body_plain.as_bytes()),
+        html_b64 = URL_SAFE_NO_PAD.encode(body_html.as_bytes()),
+    );
+
+    // Gmail wants base64url-encoded raw message
+    let encoded = URL_SAFE_NO_PAD.encode(raw_message.as_bytes());
+
+    client.send_message(&encoded).await?;
+    log::info!("Sent reply in thread {thread_id} to {to}");
+
+    Ok(())
+}
+
 /// Parse "Name <email>" or "email" format.
 fn parse_from(raw: &str) -> (String, String) {
     if let Some(bracket_start) = raw.find('<') {
