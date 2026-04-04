@@ -18,6 +18,7 @@ interface InboxProps {
   onOpenThread: (thread: { id: string; subject: string }) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onArchive: (threadId: string) => void;
 }
 
 export default function Inbox(props: InboxProps) {
@@ -71,7 +72,7 @@ export default function Inbox(props: InboxProps) {
                         <path d="M8 1.5l1.85 3.75L14 5.9l-3 2.93.71 4.12L8 10.88l-3.71 2.07.71-4.12-3-2.93 4.15-.65z" />
                       </svg>
                     </button>
-                    <button class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Done (e)">
+                    <button onClick={() => props.onArchive(thread.id)} class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Done (e)">
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M3.5 8l3 3 6-6" />
                       </svg>

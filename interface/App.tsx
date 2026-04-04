@@ -44,6 +44,21 @@ export default function App() {
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [inlineReply, setInlineReply] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
+  const [showDone, setShowDone] = createSignal(false);
+  const [doneThreads, setDoneThreads] = createSignal<ThreadRow[]>([]);
+  const [loadingDone, setLoadingDone] = createSignal(false);
+  const [showSent, setShowSent] = createSignal(false);
+  const [sentThreads, setSentThreads] = createSignal<ThreadRow[]>([]);
+  const [loadingSent, setLoadingSent] = createSignal(false);
+  const [showDrafts, setShowDrafts] = createSignal(false);
+  const [draftsThreads, setDraftsThreads] = createSignal<ThreadRow[]>([]);
+  const [loadingDrafts, setLoadingDrafts] = createSignal(false);
+  const [showBin, setShowBin] = createSignal(false);
+  const [binThreads, setBinThreads] = createSignal<ThreadRow[]>([]);
+  const [loadingBin, setLoadingBin] = createSignal(false);
+  const [showSpam, setShowSpam] = createSignal(false);
+  const [spamThreads, setSpamThreads] = createSignal<ThreadRow[]>([]);
+  const [loadingSpam, setLoadingSpam] = createSignal(false);
 
   const fetchUnreadCounts = async (splitList: SplitConfig[]) => {
     // Build queries with exclusions so counts are mutually exclusive
@@ -76,6 +91,11 @@ export default function App() {
           setSplits(saved);
           setActiveTab(saved[0].id);
           loadAllSplits();
+          prefetchDone();
+          prefetchSent();
+          prefetchDrafts();
+          prefetchBin();
+          prefetchSpam();
           fetchUnreadCounts(saved);
         } else {
           setNeedsSetup(true);
@@ -150,6 +170,127 @@ export default function App() {
   // Switching tabs is instant — data already in cache
   const loadSplit = (splitId: string) => {
     setActiveTab(splitId);
+    setShowDone(false);
+    setShowSent(false);
+    setShowDrafts(false);
+    setShowBin(false);
+    setShowSpam(false);
+  };
+
+  const prefetchDone = async () => {
+    setLoadingDone(true);
+    try {
+      const res = await invoke<InboxResponse>("list_inbox", {
+        maxResults: 50,
+        labelId: null,
+        query: "-in:inbox -in:trash -in:spam",
+      });
+      setDoneThreads(res.threads);
+    } catch (e) {
+      console.error("Failed to load done:", e);
+    } finally {
+      setLoadingDone(false);
+    }
+  };
+
+  const prefetchSent = async () => {
+    setLoadingSent(true);
+    try {
+      const res = await invoke<InboxResponse>("list_inbox", {
+        maxResults: 50,
+        labelId: null,
+        query: "in:sent",
+      });
+      setSentThreads(res.threads);
+    } catch (e) {
+      console.error("Failed to load sent:", e);
+    } finally {
+      setLoadingSent(false);
+    }
+  };
+
+  const prefetchDrafts = async () => {
+    setLoadingDrafts(true);
+    try {
+      const res = await invoke<InboxResponse>("list_inbox", {
+        maxResults: 50,
+        labelId: null,
+        query: "in:drafts",
+      });
+      setDraftsThreads(res.threads);
+    } catch (e) {
+      console.error("Failed to load drafts:", e);
+    } finally {
+      setLoadingDrafts(false);
+    }
+  };
+
+  const prefetchBin = async () => {
+    setLoadingBin(true);
+    try {
+      const res = await invoke<InboxResponse>("list_inbox", {
+        maxResults: 50,
+        labelId: null,
+        query: "in:trash",
+      });
+      setBinThreads(res.threads);
+    } catch (e) {
+      console.error("Failed to load bin:", e);
+    } finally {
+      setLoadingBin(false);
+    }
+  };
+
+  const closeAllViews = () => {
+    setShowDone(false);
+    setShowSent(false);
+    setShowDrafts(false);
+    setShowBin(false);
+    setShowSpam(false);
+    setOpenThread(null);
+    setShowSettings(false);
+    setShowCompose(false);
+  };
+
+  const prefetchSpam = async () => {
+    setLoadingSpam(true);
+    try {
+      const res = await invoke<InboxResponse>("list_inbox", {
+        maxResults: 50,
+        labelId: null,
+        query: "in:spam",
+      });
+      setSpamThreads(res.threads);
+    } catch (e) {
+      console.error("Failed to load spam:", e);
+    } finally {
+      setLoadingSpam(false);
+    }
+  };
+
+  const openSentView = () => {
+    closeAllViews();
+    setShowSent(true);
+  };
+
+  const openDoneView = () => {
+    closeAllViews();
+    setShowDone(true);
+  };
+
+  const openDraftsView = () => {
+    closeAllViews();
+    setShowDrafts(true);
+  };
+
+  const openBinView = () => {
+    closeAllViews();
+    setShowBin(true);
+  };
+
+  const openSpamView = () => {
+    closeAllViews();
+    setShowSpam(true);
   };
 
   const onAuthComplete = () => {
@@ -165,6 +306,11 @@ export default function App() {
     if (chosen.length > 0) {
       setActiveTab(chosen[0].id);
       loadAllSplits();
+      prefetchDone();
+      prefetchSent();
+      prefetchDrafts();
+      prefetchBin();
+      prefetchSpam();
       fetchUnreadCounts(chosen);
     }
   };
@@ -186,16 +332,72 @@ export default function App() {
     if (next >= 0 && next < ids.length) selectAndOpen(ids[next]);
   };
 
+  // Archive thread: optimistic UI removal + Gmail API call
+  const archiveThread = async (threadId: string) => {
+    // Find the thread before removing so we can add it to done
+    const archivedThread = threads().find((t) => t.id === threadId);
+
+    // Optimistic: remove from all split caches immediately
+    setSplitThreads((prev) => {
+      const next: Record<string, ThreadRow[]> = {};
+      for (const [key, list] of Object.entries(prev)) {
+        next[key] = list.filter((t) => t.id !== threadId);
+      }
+      return next;
+    });
+
+    // Optimistic: add to done list
+    if (archivedThread) {
+      setDoneThreads((prev) => [archivedThread, ...prev]);
+    }
+
+    // If viewing this thread, go back to list and advance selection
+    if (openThread()?.id === threadId) {
+      setOpenThread(null);
+      setInlineReply(false);
+    }
+
+    // Advance selection to next thread
+    const ids = threadIds();
+    const idx = ids.indexOf(threadId);
+    if (idx >= 0 && idx < ids.length) {
+      setSelectedId(ids[idx]);
+    } else if (ids.length > 0) {
+      setSelectedId(ids[ids.length - 1]);
+    } else {
+      setSelectedId(null);
+    }
+
+    // Fire API call in background
+    try {
+      await invoke("archive_thread", { threadId });
+    } catch (e) {
+      console.error("Archive failed:", e);
+      // On failure, refetch the active split to restore
+      loadAllSplits();
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await invoke("logout");
       setAuthed(false);
       setSplitThreads({});
+      setDoneThreads([]);
+      setSentThreads([]);
+      setDraftsThreads([]);
+      setBinThreads([]);
+      setSpamThreads([]);
       setSplits([]);
       setNeedsSetup(false);
       setOpenThread(null);
       setShowCompose(false);
       setShowSettings(false);
+      setShowDone(false);
+      setShowSent(false);
+      setShowDrafts(false);
+      setShowBin(false);
+      setShowSpam(false);
     } catch (e) {
       console.error("Logout failed:", e);
     }
@@ -208,6 +410,19 @@ export default function App() {
       case "search": setShowSearch(true); break;
       case "settings": setShowSettings(true); break;
       case "account": handleLogout(); break;
+      case "done": openDoneView(); break;
+      case "sent": openSentView(); break;
+      case "drafts": openDraftsView(); break;
+      case "bin":
+      case "trash-folder": openBinView(); break;
+      case "spam":
+      case "spam-folder": openSpamView(); break;
+      case "archive":
+      case "mark-done": {
+        const tid = openThread()?.id ?? selectedId();
+        if (tid) archiveThread(tid);
+        break;
+      }
     }
   };
 
@@ -221,6 +436,11 @@ export default function App() {
       if (showCommandBar()) { setShowCommandBar(false); return; }
       if (inlineReply()) { setInlineReply(false); return; }
       if (showSettings()) { setShowSettings(false); return; }
+      if (showDone()) { setShowDone(false); return; }
+      if (showSent()) { setShowSent(false); return; }
+      if (showDrafts()) { setShowDrafts(false); return; }
+      if (showBin()) { setShowBin(false); return; }
+      if (showSpam()) { setShowSpam(false); return; }
       if (openThread()) { setOpenThread(null); return; }
       return;
     }
@@ -263,6 +483,12 @@ export default function App() {
           setInlineReply(true);
         }
         break;
+      case "e": {
+        e.preventDefault();
+        const id = openThread()?.id ?? selectedId();
+        if (id) archiveThread(id);
+        break;
+      }
       case "/": e.preventDefault(); setShowSearch(true); break;
     }
   };
@@ -297,10 +523,11 @@ export default function App() {
               OS
             </div>
             <div class="hidden group-hover/ws:flex flex-col items-center space-y-3 mt-3">
-              <SidebarIcon icon="done" label="done" />
-              <SidebarIcon icon="sent" label="sent" />
-              <SidebarIcon icon="drafts" label="drafts" />
-              <SidebarIcon icon="bin" label="bin" />
+              <SidebarIcon icon="done" label="done" onClick={openDoneView} />
+              <SidebarIcon icon="sent" label="sent" onClick={openSentView} />
+              <SidebarIcon icon="drafts" label="drafts" onClick={openDraftsView} />
+              <SidebarIcon icon="bin" label="bin" onClick={openBinView} />
+              <SidebarIcon icon="spam" label="spam" onClick={openSpamView} />
             </div>
           </div>
           <div class="flex-1" />
@@ -317,7 +544,7 @@ export default function App() {
         {/* Nav: drag region + split inbox tabs (hidden when thread/compose open) */}
         <div class="flex-shrink-0" data-tauri-drag-region>
           <div class="h-10" data-tauri-drag-region />
-          <Show when={!openThread() && !showCompose() && !showSettings()}>
+          <Show when={!openThread() && !showCompose() && !showSettings() && !showDone() && !showSent() && !showDrafts() && !showBin() && !showSpam()}>
             <div class="flex items-center gap-0 px-20 pb-0" data-tauri-drag-region>
               <For each={splits().length > 0
                 ? splits().map((s) => ({ id: s.id, label: s.name, gmailLabelId: s.gmailLabelId, query: s.query }))
@@ -352,6 +579,11 @@ export default function App() {
 
         <div class="flex-1 relative overflow-hidden">
           <Show when={showSettings()} fallback={
+          <Show when={showSpam()} fallback={
+          <Show when={showBin()} fallback={
+          <Show when={showDrafts()} fallback={
+          <Show when={showSent()} fallback={
+          <Show when={showDone()} fallback={
           <Show when={showCompose()} fallback={
             <Show when={openThread()} fallback={
               <Inbox
@@ -360,6 +592,7 @@ export default function App() {
                 selectedId={selectedId()}
                 onSelect={selectAndOpen}
                 onOpenThread={(t) => setOpenThread(t)}
+                onArchive={archiveThread}
               />
             }>
               {(thread) => (
@@ -382,6 +615,201 @@ export default function App() {
             </Show>
           }>
             <ComposeView onClose={() => setShowCompose(false)} />
+          </Show>
+          }>
+            <div class="absolute inset-0 overflow-y-auto pt-3 pb-12">
+              <div class="flex items-center gap-2 px-20 mb-4">
+                <button onClick={() => setShowDone(false)} class="text-zinc-400 hover:text-zinc-600 transition-colors">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10 12L6 8l4-4" />
+                  </svg>
+                </button>
+                <span class="text-[15px] font-medium text-zinc-900">Done</span>
+              </div>
+              <Show when={!loadingDone()} fallback={
+                <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading…</div>
+              }>
+              <Show when={doneThreads().length > 0} fallback={
+                <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">No archived emails</div>
+              }>
+                <For each={doneThreads()}>
+                  {(thread) => (
+                    <div
+                      class="group flex items-center gap-3 px-20 py-2.5 cursor-pointer hover:bg-zinc-50"
+                      onClick={() => {
+                        setSelectedId(thread.id);
+                        setOpenThread({ id: thread.id, subject: thread.subject });
+                      }}
+                    >
+                      <div class="w-40 flex-shrink-0 truncate">
+                        <span class="text-[13px] text-zinc-500">{thread.fromName}</span>
+                      </div>
+                      <div class="flex-1 min-w-0 truncate">
+                        <span class="text-[13px] text-zinc-400">{thread.subject}</span>
+                      </div>
+                      <div class="text-[12px] text-zinc-400 tabular-nums">{thread.date}</div>
+                    </div>
+                  )}
+                </For>
+              </Show>
+              </Show>
+            </div>
+          </Show>
+          }>
+            <div class="absolute inset-0 overflow-y-auto pt-3 pb-12">
+              <div class="flex items-center gap-2 px-20 mb-4">
+                <button onClick={() => setShowSent(false)} class="text-zinc-400 hover:text-zinc-600 transition-colors">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10 12L6 8l4-4" />
+                  </svg>
+                </button>
+                <span class="text-[15px] font-medium text-zinc-900">Sent</span>
+              </div>
+              <Show when={!loadingSent()} fallback={
+                <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading…</div>
+              }>
+              <Show when={sentThreads().length > 0} fallback={
+                <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">No sent emails</div>
+              }>
+                <For each={sentThreads()}>
+                  {(thread) => (
+                    <div
+                      class="group flex items-center gap-3 px-20 py-2.5 cursor-pointer hover:bg-zinc-50"
+                      onClick={() => {
+                        setSelectedId(thread.id);
+                        setOpenThread({ id: thread.id, subject: thread.subject });
+                      }}
+                    >
+                      <div class="w-40 flex-shrink-0 truncate">
+                        <span class="text-[13px] text-zinc-500">{thread.fromName}</span>
+                      </div>
+                      <div class="flex-1 min-w-0 truncate">
+                        <span class="text-[13px] text-zinc-400">{thread.subject}</span>
+                      </div>
+                      <div class="text-[12px] text-zinc-400 tabular-nums">{thread.date}</div>
+                    </div>
+                  )}
+                </For>
+              </Show>
+              </Show>
+            </div>
+          </Show>
+          }>
+            <div class="absolute inset-0 overflow-y-auto pt-3 pb-12">
+              <div class="flex items-center gap-2 px-20 mb-4">
+                <button onClick={() => setShowDrafts(false)} class="text-zinc-400 hover:text-zinc-600 transition-colors">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10 12L6 8l4-4" />
+                  </svg>
+                </button>
+                <span class="text-[15px] font-medium text-zinc-900">Drafts</span>
+              </div>
+              <Show when={!loadingDrafts()} fallback={
+                <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading…</div>
+              }>
+              <Show when={draftsThreads().length > 0} fallback={
+                <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">No drafts</div>
+              }>
+                <For each={draftsThreads()}>
+                  {(thread) => (
+                    <div
+                      class="group flex items-center gap-3 px-20 py-2.5 cursor-pointer hover:bg-zinc-50"
+                      onClick={() => {
+                        setSelectedId(thread.id);
+                        setOpenThread({ id: thread.id, subject: thread.subject });
+                      }}
+                    >
+                      <div class="w-40 flex-shrink-0 truncate">
+                        <span class="text-[13px] text-zinc-500">{thread.fromName}</span>
+                      </div>
+                      <div class="flex-1 min-w-0 truncate">
+                        <span class="text-[13px] text-zinc-400">{thread.subject}</span>
+                      </div>
+                      <div class="text-[12px] text-zinc-400 tabular-nums">{thread.date}</div>
+                    </div>
+                  )}
+                </For>
+              </Show>
+              </Show>
+            </div>
+          </Show>
+          }>
+            <div class="absolute inset-0 overflow-y-auto pt-3 pb-12">
+              <div class="flex items-center gap-2 px-20 mb-4">
+                <button onClick={() => setShowBin(false)} class="text-zinc-400 hover:text-zinc-600 transition-colors">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10 12L6 8l4-4" />
+                  </svg>
+                </button>
+                <span class="text-[15px] font-medium text-zinc-900">Bin</span>
+              </div>
+              <Show when={!loadingBin()} fallback={
+                <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading…</div>
+              }>
+              <Show when={binThreads().length > 0} fallback={
+                <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Bin is empty</div>
+              }>
+                <For each={binThreads()}>
+                  {(thread) => (
+                    <div
+                      class="group flex items-center gap-3 px-20 py-2.5 cursor-pointer hover:bg-zinc-50"
+                      onClick={() => {
+                        setSelectedId(thread.id);
+                        setOpenThread({ id: thread.id, subject: thread.subject });
+                      }}
+                    >
+                      <div class="w-40 flex-shrink-0 truncate">
+                        <span class="text-[13px] text-zinc-500">{thread.fromName}</span>
+                      </div>
+                      <div class="flex-1 min-w-0 truncate">
+                        <span class="text-[13px] text-zinc-400">{thread.subject}</span>
+                      </div>
+                      <div class="text-[12px] text-zinc-400 tabular-nums">{thread.date}</div>
+                    </div>
+                  )}
+                </For>
+              </Show>
+              </Show>
+            </div>
+          </Show>
+          }>
+            <div class="absolute inset-0 overflow-y-auto pt-3 pb-12">
+              <div class="flex items-center gap-2 px-20 mb-4">
+                <button onClick={() => setShowSpam(false)} class="text-zinc-400 hover:text-zinc-600 transition-colors">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10 12L6 8l4-4" />
+                  </svg>
+                </button>
+                <span class="text-[15px] font-medium text-zinc-900">Spam</span>
+              </div>
+              <Show when={!loadingSpam()} fallback={
+                <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading…</div>
+              }>
+              <Show when={spamThreads().length > 0} fallback={
+                <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">No spam</div>
+              }>
+                <For each={spamThreads()}>
+                  {(thread) => (
+                    <div
+                      class="group flex items-center gap-3 px-20 py-2.5 cursor-pointer hover:bg-zinc-50"
+                      onClick={() => {
+                        setSelectedId(thread.id);
+                        setOpenThread({ id: thread.id, subject: thread.subject });
+                      }}
+                    >
+                      <div class="w-40 flex-shrink-0 truncate">
+                        <span class="text-[13px] text-zinc-500">{thread.fromName}</span>
+                      </div>
+                      <div class="flex-1 min-w-0 truncate">
+                        <span class="text-[13px] text-zinc-400">{thread.subject}</span>
+                      </div>
+                      <div class="text-[12px] text-zinc-400 tabular-nums">{thread.date}</div>
+                    </div>
+                  )}
+                </For>
+              </Show>
+              </Show>
+            </div>
           </Show>
           }>
             <Settings onBack={() => setShowSettings(false)} />
@@ -430,6 +858,13 @@ function SidebarIcon(props: { icon: string; label: string; onClick?: () => void 
     bin: () => (
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4M12.67 4v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4" />
+      </svg>
+    ),
+    spam: () => (
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="5.24 1.33 10.76 1.33 14.67 5.24 14.67 10.76 10.76 14.67 5.24 14.67 1.33 10.76 1.33 5.24" />
+        <line x1="8" y1="5.33" x2="8" y2="8" />
+        <line x1="8" y1="10.67" x2="8.01" y2="10.67" />
       </svg>
     ),
   };
