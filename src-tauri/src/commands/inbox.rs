@@ -4,81 +4,51 @@ use futures::stream::{self, StreamExt};
 use tauri::State;
 
 use crate::error::Error;
-use crate::integrations::gmail::client::{GmailClient, GmailMessage, MessagePayload, MessagePart};
+use crate::integrations::gmail::client::{GmailClient, GmailMessage, MessagePayload, MessagePart, ThreadStub};
 use crate::integrations::gmail::oauth;
 use crate::state::AppState;
 
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadRow {
-    pub id: String,
-    pub gmail_thread_id: String,
-    pub subject: String,
-    pub snippet: String,
-    pub from_name: String,
-    pub from_email: String,
-    pub date: String,
-    pub is_read: bool,
-    pub message_count: u32,
-}
+// ── Shared helpers ──
 
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InboxResponse {
-    pub threads: Vec<ThreadRow>,
-    pub next_page_token: Option<String>,
-}
-
-/// Fetch inbox threads directly from Gmail API (no local cache yet — live fetch for design iteration).
-#[tauri::command]
-pub async fn list_inbox(
-    state: State<'_, AppState>,
-    max_results: Option<u32>,
-    label_id: Option<String>,
-    query: Option<String>,
-) -> Result<InboxResponse, Error> {
-    // Get the first active account
+/// Get a GmailClient for the first active account (used by most commands).
+async fn get_gmail_client(state: &AppState) -> Result<GmailClient, Error> {
     let account_id = {
         let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        let id: String = conn
-            .query_row(
-                "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|_| Error::Auth("No active account. Please sign in.".into()))?;
-        id
+        conn.query_row(
+            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|_| Error::Auth("No active account. Please sign in.".into()))?
     };
-
-    // Get a valid token (auto-refreshes if expired)
     let token = oauth::get_valid_token(&state.db, &account_id).await?;
-    let client = GmailClient::new(token);
+    Ok(GmailClient::new(token))
+}
 
-    // Fetch threads from Gmail, filtered by label or query
-    let limit = max_results.unwrap_or(30);
-    let list = if let Some(q) = &query {
-        // Only prepend in:inbox for category split queries — all other queries
-        // (search, label:, in:*) either manage their own scope or should search globally
-        let full_query = if q.starts_with("category:") {
-            format!("in:inbox {q}")
-        } else {
-            q.clone()
-        };
-        log::info!("list_inbox query: {full_query}");
-        client.list_threads(Some(&full_query), limit, None, None).await?
-    } else {
-        let label_ids: Vec<&str> = match &label_id {
-            Some(id) => vec!["INBOX", id.as_str()],
-            None => vec!["INBOX"],
-        };
-        client.list_threads(None, limit, None, Some(&label_ids)).await?
+/// Get a GmailClient plus the sender's email and display name (for compose/reply).
+async fn get_gmail_client_with_sender(state: &AppState) -> Result<(GmailClient, String, String), Error> {
+    let (account_id, email, name) = {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        let row: (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT id, email, display_name FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|_| Error::Auth("No active account.".into()))?;
+        row
     };
+    let token = oauth::get_valid_token(&state.db, &account_id).await?;
+    let display = name.unwrap_or_else(|| email.clone());
+    Ok((GmailClient::new(token), email, display))
+}
 
-    let stubs = list.threads.unwrap_or_default();
-    let stubs_count = stubs.len();
-    log::info!("list_inbox: {} thread stubs from Gmail, next_page_token={}", stubs_count, list.next_page_token.as_deref().unwrap_or("none"));
-
-    // Fetch thread metadata concurrently (up to 10 in parallel to respect rate limits)
+/// Fetch thread metadata for a list of stubs concurrently, returning ThreadRows.
+async fn stubs_to_thread_rows(
+    stubs: Vec<ThreadStub>,
+    client: &GmailClient,
+    concurrency: usize,
+) -> Vec<ThreadRow> {
     let results: Vec<Option<ThreadRow>> = stream::iter(stubs)
         .map(|stub| {
             let client = client.clone();
@@ -90,7 +60,6 @@ pub async fn list_inbox(
                         if messages.is_empty() {
                             return None;
                         }
-
                         let last_msg = messages.last().unwrap();
                         let first_msg = messages.first().unwrap();
 
@@ -98,25 +67,16 @@ pub async fn list_inbox(
                             .get_header("Subject")
                             .unwrap_or("(no subject)")
                             .to_string();
-
                         let from_raw = last_msg.get_header("From").unwrap_or("");
                         let (from_name, from_email) = parse_from(from_raw);
-
-                        let date = last_msg
-                            .get_header("Date")
-                            .unwrap_or("")
-                            .to_string();
 
                         let date_display = last_msg
                             .internal_date
                             .as_ref()
                             .and_then(|d| d.parse::<i64>().ok())
-                            .map(|ms| {
-                                chrono::DateTime::from_timestamp_millis(ms)
-                                    .map(|dt| dt.format("%b %d").to_string())
-                                    .unwrap_or_default()
-                            })
-                            .unwrap_or(date);
+                            .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms))
+                            .map(|dt| dt.format("%b %d").to_string())
+                            .unwrap_or_default();
 
                         let is_read = last_msg
                             .label_ids
@@ -143,11 +103,140 @@ pub async fn list_inbox(
                 }
             }
         })
-        .buffered(10)
+        .buffered(concurrency)
         .collect()
         .await;
 
-    let threads: Vec<ThreadRow> = results.into_iter().flatten().collect();
+    results.into_iter().flatten().collect()
+}
+
+/// Parameters for building an RFC 2822 email message.
+struct EmailParams {
+    from_display: String,
+    from_email: String,
+    to: String,
+    cc: Option<String>,
+    bcc: Option<String>,
+    subject: String,
+    body: String,
+    in_reply_to: Option<String>,
+}
+
+/// Build an RFC 2822 MIME message (multipart/alternative with plain + HTML).
+fn build_rfc2822(params: &EmailParams) -> String {
+    let body_with_sig = format!("{}\n\n---\nSent with Memphis", params.body);
+    let body_plain = body_with_sig.clone();
+    let body_html = body_with_sig
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\n', "<br>");
+
+    let boundary = format!("----=_Part_{}", uuid::Uuid::new_v4().as_simple());
+    let date = chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S %z").to_string();
+
+    let mut headers = format!(
+        "From: {} <{}>\r\nTo: {}\r\n",
+        params.from_display, params.from_email, params.to
+    );
+    if let Some(cc_val) = &params.cc {
+        if !cc_val.trim().is_empty() {
+            headers.push_str(&format!("Cc: {cc_val}\r\n"));
+        }
+    }
+    if let Some(bcc_val) = &params.bcc {
+        if !bcc_val.trim().is_empty() {
+            headers.push_str(&format!("Bcc: {bcc_val}\r\n"));
+        }
+    }
+    headers.push_str(&format!("Subject: {}\r\n", params.subject));
+    if let Some(reply_id) = &params.in_reply_to {
+        headers.push_str(&format!(
+            "In-Reply-To: <{reply_id}>\r\nReferences: <{reply_id}>\r\n"
+        ));
+    }
+    headers.push_str(&format!(
+        "Date: {date}\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"{boundary}\"\r\n"
+    ));
+
+    format!(
+        "{headers}\r\n\
+         --{boundary}\r\n\
+         Content-Type: text/plain; charset=UTF-8\r\n\
+         Content-Transfer-Encoding: base64\r\n\
+         \r\n\
+         {plain_b64}\r\n\
+         --{boundary}\r\n\
+         Content-Type: text/html; charset=UTF-8\r\n\
+         Content-Transfer-Encoding: base64\r\n\
+         \r\n\
+         {html_b64}\r\n\
+         --{boundary}--",
+        plain_b64 = STANDARD.encode(body_plain.as_bytes()),
+        html_b64 = STANDARD.encode(body_html.as_bytes()),
+    )
+}
+
+// ── Data types ──
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadRow {
+    pub id: String,
+    pub gmail_thread_id: String,
+    pub subject: String,
+    pub snippet: String,
+    pub from_name: String,
+    pub from_email: String,
+    pub date: String,
+    pub is_read: bool,
+    pub message_count: u32,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxResponse {
+    pub threads: Vec<ThreadRow>,
+    pub next_page_token: Option<String>,
+}
+
+// ── Commands ──
+
+/// Fetch inbox threads directly from Gmail API (no local cache yet — live fetch for design iteration).
+#[tauri::command]
+pub async fn list_inbox(
+    state: State<'_, AppState>,
+    max_results: Option<u32>,
+    label_id: Option<String>,
+    query: Option<String>,
+) -> Result<InboxResponse, Error> {
+    let client = get_gmail_client(&state).await?;
+
+    // Fetch threads from Gmail, filtered by label or query
+    let limit = max_results.unwrap_or(30);
+    let list = if let Some(q) = &query {
+        // Only prepend in:inbox for category split queries — all other queries
+        // (search, label:, in:*) either manage their own scope or should search globally
+        let full_query = if q.starts_with("category:") {
+            format!("in:inbox {q}")
+        } else {
+            q.clone()
+        };
+        log::info!("list_inbox query: {full_query}");
+        client.list_threads(Some(&full_query), limit, None, None).await?
+    } else {
+        let label_ids: Vec<&str> = match &label_id {
+            Some(id) => vec!["INBOX", id.as_str()],
+            None => vec!["INBOX"],
+        };
+        client.list_threads(None, limit, None, Some(&label_ids)).await?
+    };
+
+    let stubs = list.threads.unwrap_or_default();
+    let stubs_count = stubs.len();
+    log::info!("list_inbox: {} thread stubs from Gmail, next_page_token={}", stubs_count, list.next_page_token.as_deref().unwrap_or("none"));
+
+    let threads = stubs_to_thread_rows(stubs, &client, 10).await;
     log::info!("list_inbox: returning {} threads (dropped {} failed/empty)", threads.len(), stubs_count - threads.len());
 
     Ok(InboxResponse {
@@ -163,18 +252,7 @@ pub async fn get_unread_counts(
     state: State<'_, AppState>,
     splits: Vec<SplitQueryInput>,
 ) -> Result<Vec<SplitUnreadCount>, Error> {
-    let account_id = {
-        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        conn.query_row(
-            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(|_| Error::Auth("No active account.".into()))?
-    };
-
-    let token = oauth::get_valid_token(&state.db, &account_id).await?;
-    let client = GmailClient::new(token);
+    let client = get_gmail_client(&state).await?;
 
     let counts: Vec<SplitUnreadCount> = stream::iter(splits)
         .map(|split| {
@@ -225,18 +303,7 @@ pub async fn archive_thread(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<(), Error> {
-    let account_id = {
-        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        conn.query_row(
-            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(|_| Error::Auth("No active account.".into()))?
-    };
-
-    let token = oauth::get_valid_token(&state.db, &account_id).await?;
-    let client = GmailClient::new(token);
+    let client = get_gmail_client(&state).await?;
     client.modify_thread(&thread_id, &[], &["INBOX"]).await?;
     log::info!("Archived thread {thread_id}");
     Ok(())
@@ -248,18 +315,7 @@ pub async fn trash_thread(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<(), Error> {
-    let account_id = {
-        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        conn.query_row(
-            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(|_| Error::Auth("No active account.".into()))?
-    };
-
-    let token = oauth::get_valid_token(&state.db, &account_id).await?;
-    let client = GmailClient::new(token);
+    let client = get_gmail_client(&state).await?;
     client.modify_thread(&thread_id, &["TRASH"], &["INBOX"]).await?;
     log::info!("Trashed thread {thread_id}");
     Ok(())
@@ -271,18 +327,7 @@ pub async fn mark_thread_read(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<(), Error> {
-    let account_id = {
-        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        conn.query_row(
-            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(|_| Error::Auth("No active account.".into()))?
-    };
-
-    let token = oauth::get_valid_token(&state.db, &account_id).await?;
-    let client = GmailClient::new(token);
+    let client = get_gmail_client(&state).await?;
     client.modify_thread(&thread_id, &[], &["UNREAD"]).await?;
     log::info!("Marked thread {thread_id} as read");
     Ok(())
@@ -299,82 +344,12 @@ pub async fn search_threads(
         return Ok(vec![]);
     }
 
-    let account_id = {
-        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        conn.query_row(
-            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(|_| Error::Auth("No active account.".into()))?
-    };
-
-    let token = oauth::get_valid_token(&state.db, &account_id).await?;
-    let client = GmailClient::new(token);
-
+    let client = get_gmail_client(&state).await?;
     let list = client.list_threads(Some(&query), 10, None, None).await?;
     let stubs = list.threads.unwrap_or_default();
 
-    // Fetch all 10 in parallel — metadata only, very fast
-    let results: Vec<Option<ThreadRow>> = stream::iter(stubs)
-        .map(|stub| {
-            let client = client.clone();
-            async move {
-                let snippet_text = stub.snippet.unwrap_or_default();
-                match client.get_thread(&stub.id).await {
-                    Ok(thread) => {
-                        let messages = thread.messages.unwrap_or_default();
-                        if messages.is_empty() {
-                            return None;
-                        }
-                        let last_msg = messages.last().unwrap();
-                        let first_msg = messages.first().unwrap();
-
-                        let subject = first_msg
-                            .get_header("Subject")
-                            .unwrap_or("(no subject)")
-                            .to_string();
-                        let from_raw = last_msg.get_header("From").unwrap_or("");
-                        let (from_name, from_email) = parse_from(from_raw);
-
-                        let date_display = last_msg
-                            .internal_date
-                            .as_ref()
-                            .and_then(|d| d.parse::<i64>().ok())
-                            .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms))
-                            .map(|dt| dt.format("%b %d").to_string())
-                            .unwrap_or_default();
-
-                        let is_read = last_msg
-                            .label_ids
-                            .as_ref()
-                            .map(|labels| !labels.iter().any(|l| l == "UNREAD"))
-                            .unwrap_or(true);
-
-                        Some(ThreadRow {
-                            id: thread.id.clone(),
-                            gmail_thread_id: thread.id,
-                            subject,
-                            snippet: snippet_text,
-                            from_name,
-                            from_email,
-                            date: date_display,
-                            is_read,
-                            message_count: messages.len() as u32,
-                        })
-                    }
-                    Err(e) => {
-                        log::warn!("Search: failed to fetch thread {}: {e}", stub.id);
-                        None
-                    }
-                }
-            }
-        })
-        .buffered(10)
-        .collect()
-        .await;
-
-    Ok(results.into_iter().flatten().collect())
+    let threads = stubs_to_thread_rows(stubs, &client, 10).await;
+    Ok(threads)
 }
 
 // ── Thread detail (full message bodies) ──
@@ -405,21 +380,7 @@ pub async fn get_thread_detail(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<ThreadDetail, Error> {
-    let account_id = {
-        let conn = state
-            .db
-            .lock()
-            .map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        conn.query_row(
-            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(|_| Error::Auth("No active account.".into()))?
-    };
-
-    let token = oauth::get_valid_token(&state.db, &account_id).await?;
-    let client = GmailClient::new(token);
+    let client = get_gmail_client(&state).await?;
     let thread = client.get_thread_full(&thread_id).await?;
 
     let messages = thread.messages.unwrap_or_default();
@@ -644,84 +605,20 @@ pub async fn send_email(
     subject: String,
     body: String,
 ) -> Result<(), Error> {
-    let (account_id, from_email, from_name) = {
-        let conn = state
-            .db
-            .lock()
-            .map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        let row: (String, String, Option<String>) = conn
-            .query_row(
-                "SELECT id, email, display_name FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(|_| Error::Auth("No active account.".into()))?;
-        row
-    };
-
-    let token = oauth::get_valid_token(&state.db, &account_id).await?;
-    let client = GmailClient::new(token);
-
-    let from_display = sanitize_header(&from_name.unwrap_or_else(|| from_email.clone()));
-    let from_email = sanitize_header(&from_email);
-    let to = sanitize_header(&to);
-    let subject = sanitize_header(&subject);
-    let date = chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S %z").to_string();
-
-    let body_with_sig = format!("{body}\n\n---\nSent with Memphis");
-    let body_plain = body_with_sig.clone();
-    let body_html = body_with_sig
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('\n', "<br>");
-
-    let boundary = format!("----=_Part_{}", uuid::Uuid::new_v4().as_simple());
-
-    let mut headers = format!(
-        "From: {from_display} <{from_email}>\r\n\
-         To: {to}\r\n"
-    );
-    if let Some(cc_val) = &cc {
-        let cc_val = sanitize_header(cc_val);
-        if !cc_val.trim().is_empty() {
-            headers.push_str(&format!("Cc: {cc_val}\r\n"));
-        }
-    }
-    if let Some(bcc_val) = &bcc {
-        let bcc_val = sanitize_header(bcc_val);
-        if !bcc_val.trim().is_empty() {
-            headers.push_str(&format!("Bcc: {bcc_val}\r\n"));
-        }
-    }
-    headers.push_str(&format!(
-        "Subject: {subject}\r\n\
-         Date: {date}\r\n\
-         MIME-Version: 1.0\r\n\
-         Content-Type: multipart/alternative; boundary=\"{boundary}\"\r\n"
-    ));
-
-    let raw_message = format!(
-        "{headers}\r\n\
-         --{boundary}\r\n\
-         Content-Type: text/plain; charset=UTF-8\r\n\
-         Content-Transfer-Encoding: base64\r\n\
-         \r\n\
-         {plain_b64}\r\n\
-         --{boundary}\r\n\
-         Content-Type: text/html; charset=UTF-8\r\n\
-         Content-Transfer-Encoding: base64\r\n\
-         \r\n\
-         {html_b64}\r\n\
-         --{boundary}--",
-         plain_b64 = STANDARD.encode(body_plain.as_bytes()),
-         html_b64 = STANDARD.encode(body_html.as_bytes()),
-    );
-
-    let encoded = URL_SAFE_NO_PAD.encode(raw_message.as_bytes());
+    let (client, from_email, from_display) = get_gmail_client_with_sender(&state).await?;
+    let raw = build_rfc2822(&EmailParams {
+        from_display: sanitize_header(&from_display),
+        from_email: sanitize_header(&from_email),
+        to: sanitize_header(&to),
+        cc: cc.map(|v| sanitize_header(&v)),
+        bcc: bcc.map(|v| sanitize_header(&v)),
+        subject: sanitize_header(&subject),
+        body,
+        in_reply_to: None,
+    });
+    let encoded = URL_SAFE_NO_PAD.encode(raw.as_bytes());
     client.send_message(&encoded).await?;
     log::info!("Sent new email to {to}");
-
     Ok(())
 }
 
@@ -737,92 +634,20 @@ pub async fn send_reply(
     subject: String,
     body: String,
 ) -> Result<(), Error> {
-    let (account_id, from_email, from_name) = {
-        let conn = state
-            .db
-            .lock()
-            .map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        let row: (String, String, Option<String>) = conn
-            .query_row(
-                "SELECT id, email, display_name FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(|_| Error::Auth("No active account.".into()))?;
-        row
-    };
-
-    let token = oauth::get_valid_token(&state.db, &account_id).await?;
-    let client = GmailClient::new(token);
-
-    // Build RFC 2822 message
-    let from_display = sanitize_header(&from_name.unwrap_or_else(|| from_email.clone()));
-    let from_email = sanitize_header(&from_email);
-    let to = sanitize_header(&to);
-    let subject = sanitize_header(&subject);
-    let message_id = sanitize_header(&message_id);
-    let date = chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S %z").to_string();
-
-    // Escape body for plain text, and produce a simple HTML version
-    let body_with_sig = format!("{body}\n\n---\nSent with Memphis");
-    let body_plain = body_with_sig.clone();
-    let body_html = body_with_sig
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('\n', "<br>");
-
-    let boundary = format!("----=_Part_{}", uuid::Uuid::new_v4().as_simple());
-
-    // Build headers, conditionally adding Cc and Bcc
-    let mut headers = format!(
-        "From: {from_display} <{from_email}>\r\n\
-         To: {to}\r\n"
-    );
-    if let Some(cc_val) = &cc {
-        let cc_val = sanitize_header(cc_val);
-        if !cc_val.trim().is_empty() {
-            headers.push_str(&format!("Cc: {cc_val}\r\n"));
-        }
-    }
-    if let Some(bcc_val) = &bcc {
-        let bcc_val = sanitize_header(bcc_val);
-        if !bcc_val.trim().is_empty() {
-            headers.push_str(&format!("Bcc: {bcc_val}\r\n"));
-        }
-    }
-    headers.push_str(&format!(
-        "Subject: {subject}\r\n\
-         In-Reply-To: <{message_id}>\r\n\
-         References: <{message_id}>\r\n\
-         Date: {date}\r\n\
-         MIME-Version: 1.0\r\n\
-         Content-Type: multipart/alternative; boundary=\"{boundary}\"\r\n"
-    ));
-
-    let raw_message = format!(
-        "{headers}\r\n\
-         --{boundary}\r\n\
-         Content-Type: text/plain; charset=UTF-8\r\n\
-         Content-Transfer-Encoding: base64\r\n\
-         \r\n\
-         {plain_b64}\r\n\
-         --{boundary}\r\n\
-         Content-Type: text/html; charset=UTF-8\r\n\
-         Content-Transfer-Encoding: base64\r\n\
-         \r\n\
-         {html_b64}\r\n\
-         --{boundary}--",
-        plain_b64 = URL_SAFE_NO_PAD.encode(body_plain.as_bytes()),
-        html_b64 = URL_SAFE_NO_PAD.encode(body_html.as_bytes()),
-    );
-
-    // Gmail wants base64url-encoded raw message
-    let encoded = URL_SAFE_NO_PAD.encode(raw_message.as_bytes());
-
+    let (client, from_email, from_display) = get_gmail_client_with_sender(&state).await?;
+    let raw = build_rfc2822(&EmailParams {
+        from_display: sanitize_header(&from_display),
+        from_email: sanitize_header(&from_email),
+        to: sanitize_header(&to),
+        cc: cc.map(|v| sanitize_header(&v)),
+        bcc: bcc.map(|v| sanitize_header(&v)),
+        subject: sanitize_header(&subject),
+        body,
+        in_reply_to: Some(sanitize_header(&message_id)),
+    });
+    let encoded = URL_SAFE_NO_PAD.encode(raw.as_bytes());
     client.send_message(&encoded).await?;
     log::info!("Sent reply in thread {thread_id} to {to}");
-
     Ok(())
 }
 
