@@ -529,7 +529,11 @@ pub async fn send_reply(
     let client = GmailClient::new(token);
 
     // Build RFC 2822 message
-    let from_display = from_name.unwrap_or_else(|| from_email.clone());
+    let from_display = sanitize_header(&from_name.unwrap_or_else(|| from_email.clone()));
+    let from_email = sanitize_header(&from_email);
+    let to = sanitize_header(&to);
+    let subject = sanitize_header(&subject);
+    let message_id = sanitize_header(&message_id);
     let date = chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S %z").to_string();
 
     // Escape body for plain text, and produce a simple HTML version
@@ -548,11 +552,13 @@ pub async fn send_reply(
          To: {to}\r\n"
     );
     if let Some(cc_val) = &cc {
+        let cc_val = sanitize_header(cc_val);
         if !cc_val.trim().is_empty() {
             headers.push_str(&format!("Cc: {cc_val}\r\n"));
         }
     }
     if let Some(bcc_val) = &bcc {
+        let bcc_val = sanitize_header(bcc_val);
         if !bcc_val.trim().is_empty() {
             headers.push_str(&format!("Bcc: {bcc_val}\r\n"));
         }
@@ -590,6 +596,11 @@ pub async fn send_reply(
     log::info!("Sent reply in thread {thread_id} to {to}");
 
     Ok(())
+}
+
+/// Strip CR/LF from a header value to prevent CRLF injection.
+fn sanitize_header(val: &str) -> String {
+    val.replace(['\r', '\n'], "")
 }
 
 /// Parse "Name <email>" or "email" format.
