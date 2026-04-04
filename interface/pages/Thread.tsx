@@ -32,14 +32,17 @@ export default function ThreadView(props: ThreadViewProps) {
   const [error, setError] = createSignal<string | null>(null);
   const [collapsed, setCollapsed] = createSignal<Set<string>>(new Set());
   const [replyBody, setReplyBody] = createSignal("");
+  const [replyTo, setReplyTo] = createSignal("");
+  const [replyCc, setReplyCc] = createSignal("");
+  const [replyBcc, setReplyBcc] = createSignal("");
+  const [showCcBcc, setShowCcBcc] = createSignal(false);
+  const [sending, setSending] = createSignal(false);
+  const [sendError, setSendError] = createSignal<string | null>(null);
+  let threadContentRef: HTMLDivElement | undefined;
 
-  // Fetch thread detail when threadId changes
-  createEffect(() => {
-    const id = props.threadId;
+  const fetchThread = (id: string) => {
     setLoading(true);
     setError(null);
-    setMessages([]);
-    setCollapsed(new Set<string>());
 
     invoke<ThreadDetailResponse>("get_thread_detail", { threadId: id })
       .then((detail) => {
@@ -48,13 +51,42 @@ export default function ThreadView(props: ThreadViewProps) {
         if (detail.messages.length > 1) {
           const ids = new Set(detail.messages.slice(0, -1).map((m) => m.id));
           setCollapsed(ids);
+        } else {
+          setCollapsed(new Set<string>());
         }
+        // Scroll thread to bottom after load
+        setTimeout(() => {
+          if (threadContentRef) {
+            threadContentRef.scrollTop = threadContentRef.scrollHeight;
+          }
+        }, 100);
       })
       .catch((e) => {
         console.error("Failed to load thread:", e);
         setError(typeof e === "string" ? e : "Failed to load thread");
       })
       .finally(() => setLoading(false));
+  };
+
+  // Fetch thread detail when threadId changes
+  createEffect(() => {
+    const id = props.threadId;
+    setMessages([]);
+    setCollapsed(new Set<string>());
+    fetchThread(id);
+  });
+
+  // Pre-fill reply To when reply opens
+  createEffect(() => {
+    if (props.replyOpen) {
+      const msg = lastMsg();
+      if (msg) {
+        setReplyTo(msg.fromEmail);
+        setReplyCc(msg.cc || "");
+        setReplyBcc("");
+        setShowCcBcc(!!(msg.cc));
+      }
+    }
   });
 
   const lastMsg = () => {
@@ -71,11 +103,83 @@ export default function ThreadView(props: ThreadViewProps) {
     });
   };
 
+  const handleSend = async () => {
+    const msg = lastMsg();
+    if (!msg || !replyBody().trim() || !replyTo().trim()) return;
+
+    setSending(true);
+    setSendError(null);
+
+    const subject = props.subject.startsWith("Re: ")
+      ? props.subject
+      : `Re: ${props.subject}`;
+
+    const sentBody = replyBody();
+    const sentTo = replyTo();
+    const sentCc = replyCc();
+
+    try {
+      await invoke("send_reply", {
+        threadId: props.threadId,
+        messageId: msg.id,
+        to: sentTo,
+        cc: sentCc.trim() || null,
+        bcc: replyBcc().trim() || null,
+        subject,
+        body: sentBody,
+      });
+
+      // Optimistically add sent message to thread immediately
+      const now = new Date();
+      const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+        + ", " + now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      const htmlBody = sentBody
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br>");
+      const sentMessage: Message = {
+        id: `sent-${Date.now()}`,
+        fromName: "Me",
+        fromEmail: sentTo, // will be corrected on refresh
+        to: sentTo,
+        cc: sentCc,
+        date: dateStr,
+        bodyHtml: `<div style="white-space:pre-wrap;word-break:break-word">${htmlBody}</div>`,
+      };
+
+      // Collapse all existing messages, add sent message expanded
+      setCollapsed(new Set(messages().map((m) => m.id)));
+      setMessages((prev) => [...prev, sentMessage]);
+
+      setReplyBody("");
+      setReplyCc("");
+      setReplyBcc("");
+      setShowCcBcc(false);
+      props.onReplyClose?.();
+
+      // Scroll to bottom to show the new message
+      setTimeout(() => {
+        if (threadContentRef) {
+          threadContentRef.scrollTop = threadContentRef.scrollHeight;
+        }
+      }, 50);
+
+      // Background refresh to get real Gmail data
+      setTimeout(() => fetchThread(props.threadId), 3000);
+    } catch (e) {
+      console.error("Send failed:", e);
+      setSendError(typeof e === "string" ? e : "Failed to send reply");
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
     <div class="h-full flex flex-col bg-white">
-      <div class="flex-1 overflow-y-auto px-20">
-        {/* Actions row */}
-        <div class="flex items-center mb-4">
+      {/* Actions row */}
+      <div class="flex-shrink-0 px-20 pt-0 pb-2">
+        <div class="flex items-center mb-3">
           <button
             onClick={props.onBack}
             class="p-1 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors"
@@ -117,48 +221,113 @@ export default function ThreadView(props: ThreadViewProps) {
           {props.subject}
         </h1>
 
-        <div>
-          {/* Guide hint */}
-          <div class="mt-2 mb-6 flex items-center gap-3 opacity-60">
-            <span class="text-[12px] text-zinc-400">
-              Hit <kbd class="px-1 py-0.5 rounded bg-zinc-100 text-[11px] font-mono text-zinc-500">R</kbd> to reply
-            </span>
-            <span class="text-[12px] text-zinc-400">
-              <kbd class="px-1 py-0.5 rounded bg-zinc-100 text-[11px] font-mono text-zinc-500">E</kbd> archive
-            </span>
-            <span class="text-[12px] text-zinc-400">
-              <kbd class="px-1 py-0.5 rounded bg-zinc-100 text-[11px] font-mono text-zinc-500">Esc</kbd> back
-            </span>
-          </div>
+        {/* Guide hint */}
+        <div class="mt-2 mb-2 flex items-center gap-3 opacity-60">
+          <span class="text-[12px] text-zinc-400">
+            Hit <kbd class="px-1 py-0.5 rounded bg-zinc-100 text-[11px] font-mono text-zinc-500">R</kbd> to reply
+          </span>
+          <span class="text-[12px] text-zinc-400">
+            <kbd class="px-1 py-0.5 rounded bg-zinc-100 text-[11px] font-mono text-zinc-500">E</kbd> archive
+          </span>
+          <span class="text-[12px] text-zinc-400">
+            <kbd class="px-1 py-0.5 rounded bg-zinc-100 text-[11px] font-mono text-zinc-500">Esc</kbd> back
+          </span>
+        </div>
+      </div>
 
-          {/* Loading / Error / Messages */}
-          <Show when={!loading()} fallback={
-            <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading messages…</div>
+      {/* Thread content — scrollable, shrinks when reply is open */}
+      <div
+        ref={threadContentRef}
+        class={`overflow-y-auto px-20 ${
+          props.replyOpen ? "flex-shrink-1 min-h-0" : "flex-1"
+        }`}
+        style={props.replyOpen ? { "max-height": "40%", "flex": "0 1 40%" } : {}}
+      >
+        <Show when={!loading()} fallback={
+          <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading messages...</div>
+        }>
+          <Show when={!error()} fallback={
+            <div class="flex items-center justify-center h-32 text-[13px] text-red-500">{error()}</div>
           }>
-            <Show when={!error()} fallback={
-              <div class="flex items-center justify-center h-32 text-[13px] text-red-500">{error()}</div>
-            }>
-              <div class="space-y-5">
-                <For each={messages()}>
-                  {(msg) => (
-                    <MessageBubble
-                      message={msg}
-                      isCollapsed={collapsed().has(msg.id)}
-                      onToggle={() => toggleCollapse(msg.id)}
-                    />
-                  )}
-                </For>
-              </div>
-            </Show>
+            <div class="space-y-5 pb-4">
+              <For each={messages()}>
+                {(msg) => (
+                  <MessageBubble
+                    message={msg}
+                    isCollapsed={collapsed().has(msg.id)}
+                    onToggle={() => toggleCollapse(msg.id)}
+                  />
+                )}
+              </For>
+            </div>
           </Show>
+        </Show>
+      </div>
 
-          {/* Inline reply */}
-          <Show when={props.replyOpen && lastMsg()}>
-            <div class="mt-5 border-l-2 border-zinc-300 pl-5">
-              <div class="flex items-center gap-2 mb-1">
-                <span class="text-[12px] text-zinc-400">To: {lastMsg()!.fromName}</span>
-                <span class="text-[12px] text-zinc-400 ml-auto">&lt;{lastMsg()!.fromEmail}&gt;</span>
+      {/* Reply area — takes priority when open */}
+      <Show when={props.replyOpen && lastMsg()}>
+        <div class="flex-1 min-h-0 flex flex-col">
+          <div class="flex-1 min-h-0 flex flex-col px-20 py-4">
+            {/* Reply header with To field and expand chevron for CC/BCC */}
+            <div class="flex-shrink-0 space-y-2 mb-3">
+              {/* To row */}
+              <div class="flex items-center gap-2">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-zinc-400 flex-shrink-0">
+                  <path d="M6 12L2 8l4-4" />
+                  <path d="M2 8h9a3 3 0 013 3v1" />
+                </svg>
+                <span class="text-[12px] text-zinc-400 flex-shrink-0">To</span>
+                <input
+                  type="text"
+                  value={replyTo()}
+                  onInput={(e) => setReplyTo(e.currentTarget.value)}
+                  class="flex-1 text-[13px] text-zinc-700 bg-transparent outline-none placeholder:text-zinc-300"
+                  placeholder="recipient@email.com"
+                />
+                <button
+                  onClick={() => setShowCcBcc((v) => !v)}
+                  class="text-zinc-400 hover:text-zinc-600 transition-colors p-0.5 flex-shrink-0"
+                  title={showCcBcc() ? "Hide Cc/Bcc" : "Show Cc/Bcc"}
+                >
+                  <svg
+                    width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+                    stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                    class={`transition-transform ${showCcBcc() ? "rotate-180" : ""}`}
+                  >
+                    <path d="M3 4.5L6 7.5L9 4.5" />
+                  </svg>
+                </button>
               </div>
+
+              {/* CC/BCC rows — expandable */}
+              <Show when={showCcBcc()}>
+                <div class="flex items-center gap-2">
+                  <div class="w-[14px] flex-shrink-0" />
+                  <span class="text-[12px] text-zinc-400 flex-shrink-0">Cc</span>
+                  <input
+                    type="text"
+                    value={replyCc()}
+                    onInput={(e) => setReplyCc(e.currentTarget.value)}
+                    class="flex-1 text-[13px] text-zinc-700 bg-transparent outline-none placeholder:text-zinc-300"
+                    placeholder="cc@email.com"
+                  />
+                </div>
+                <div class="flex items-center gap-2">
+                  <div class="w-[14px] flex-shrink-0" />
+                  <span class="text-[12px] text-zinc-400 flex-shrink-0">Bcc</span>
+                  <input
+                    type="text"
+                    value={replyBcc()}
+                    onInput={(e) => setReplyBcc(e.currentTarget.value)}
+                    class="flex-1 text-[13px] text-zinc-700 bg-transparent outline-none placeholder:text-zinc-300"
+                    placeholder="bcc@email.com"
+                  />
+                </div>
+              </Show>
+            </div>
+
+            {/* Textarea — grows to fill space */}
+            <div class="flex-1 min-h-0 relative">
               <textarea
                 ref={(el) => setTimeout(() => el.focus(), 0)}
                 value={replyBody()}
@@ -170,23 +339,53 @@ export default function ThreadView(props: ThreadViewProps) {
                   }
                   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                     e.preventDefault();
-                    setReplyBody("");
-                    props.onReplyClose?.();
+                    handleSend();
                   }
                 }}
                 placeholder="Write your reply..."
-                class="w-full min-h-[120px] text-[14px] text-zinc-800 leading-[1.7] bg-transparent resize-none outline-none placeholder:text-zinc-300"
+                disabled={sending()}
+                class="absolute inset-0 w-full h-full text-[14px] text-zinc-800 leading-[1.7] bg-transparent resize-none outline-none placeholder:text-zinc-300 disabled:opacity-50"
               />
-              <div class="flex items-center gap-3 mt-2 mb-2">
-                <span class="text-[11px] text-zinc-400">⌘ Enter to send</span>
-                <span class="text-[11px] text-zinc-400">Esc to discard</span>
+            </div>
+
+            {/* Footer */}
+            <div class="flex items-center gap-3 mt-3 flex-shrink-0">
+              <Show when={sendError()}>
+                <span class="text-[12px] text-red-500">{sendError()}</span>
+              </Show>
+              <span class="text-[11px] text-zinc-400">
+                ⌘ Enter to send · Esc to discard
+              </span>
+              <div class="flex-1" />
+              <div class="flex items-center gap-3">
+                <button
+                  disabled={sending() || !replyBody().trim()}
+                  class="text-[12px] text-zinc-500 hover:text-zinc-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium flex items-center gap-1.5"
+                  title="Schedule send"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="8" cy="8" r="6.5" />
+                    <path d="M8 4.5V8l2.5 1.5" />
+                  </svg>
+                  Schedule
+                </button>
+                <button
+                  onClick={handleSend}
+                  disabled={sending() || !replyBody().trim()}
+                  class="px-3 py-1 rounded-md border border-zinc-200 text-[12px] text-zinc-500 hover:text-zinc-800 hover:border-zinc-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+                >
+                  {sending() ? "Sending..." : "Send"}
+                </button>
               </div>
             </div>
-          </Show>
+          </div>
         </div>
+      </Show>
 
-        <div class="h-8" />
-      </div>
+      {/* Bottom padding when reply is NOT open */}
+      <Show when={!props.replyOpen}>
+        <div class="h-8 flex-shrink-0" />
+      </Show>
     </div>
   );
 }
@@ -205,7 +404,6 @@ function MessageBubble(props: { message: Message; isCollapsed: boolean; onToggle
   // "To me" or "To recipient" — short version
   const toShort = () => {
     const to = msg().to;
-    // If it's addressed to a single known user, show "me"
     if (!to || to.includes("@") && to.split(",").length === 1) {
       return "me";
     }
@@ -228,7 +426,7 @@ function MessageBubble(props: { message: Message; isCollapsed: boolean; onToggle
       </div>
     }>
       <div>
-        {/* Sender row: Name  email@address  ·  date */}
+        {/* Sender row */}
         <div class="flex items-baseline gap-2 cursor-pointer" onClick={props.onToggle}>
           <span class="text-[14px] font-semibold text-zinc-900">{msg().fromName}</span>
           <span class="text-[13px] text-zinc-400">{msg().fromEmail}</span>
@@ -236,7 +434,7 @@ function MessageBubble(props: { message: Message; isCollapsed: boolean; onToggle
           <span class="text-[12px] text-zinc-400 flex-shrink-0">{msg().date}</span>
         </div>
 
-        {/* To line — collapsed by default, click chevron to expand */}
+        {/* To line */}
         <div class="mt-0.5 flex items-center gap-1">
           <span class="text-[12px] text-zinc-400">To {toShort()}</span>
           <button
@@ -254,7 +452,7 @@ function MessageBubble(props: { message: Message; isCollapsed: boolean; onToggle
           </button>
         </div>
 
-        {/* Expanded details: full To + CC */}
+        {/* Expanded details */}
         <Show when={detailsOpen()}>
           <div class="mt-1.5 pl-0 space-y-0.5 text-[12px] text-zinc-400">
             <div>
@@ -278,7 +476,7 @@ function MessageBubble(props: { message: Message; isCollapsed: boolean; onToggle
           </div>
         </Show>
 
-        {/* Body — sandboxed iframe for CSS isolation */}
+        {/* Body */}
         <div class="mt-4 border-l-2 border-zinc-200 pl-5">
           <EmailBody html={msg().bodyHtml} />
         </div>
@@ -287,7 +485,6 @@ function MessageBubble(props: { message: Message; isCollapsed: boolean; onToggle
   );
 }
 
-/** Renders sanitized HTML email in a sandboxed iframe with auto-height. */
 function EmailBody(props: { html: string }) {
   let iframeRef: HTMLIFrameElement | undefined;
   const [height, setHeight] = createSignal(60);
@@ -296,7 +493,7 @@ function EmailBody(props: { html: string }) {
     const doc = iframeRef?.contentDocument;
     if (doc?.body) {
       const h = doc.body.scrollHeight;
-      if (h > 0) setHeight(h + 4); // small buffer to avoid scrollbar
+      if (h > 0) setHeight(h + 4);
     }
   };
 
@@ -330,7 +527,6 @@ function EmailBody(props: { html: string }) {
 </style></head><body>${html}</body></html>`);
     doc.close();
 
-    // Resize after render and again after images load
     setTimeout(resizeToContent, 50);
     setTimeout(resizeToContent, 500);
     setTimeout(resizeToContent, 1500);
