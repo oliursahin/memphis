@@ -927,6 +927,7 @@ export default function App() {
             closeAllViews();
             setSelectedId(id);
             setOpenThread({ id, subject });
+            markThreadRead(id);
           }}
         />
       </Show>
