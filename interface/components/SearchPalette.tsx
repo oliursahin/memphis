@@ -1,8 +1,9 @@
 import { createSignal, For, Show } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 
 interface SearchOverlayProps {
   onClose: () => void;
-  onSelectThread: (id: string) => void;
+  onSelectThread: (id: string, subject: string) => void;
 }
 
 interface SearchResult {
@@ -13,28 +14,55 @@ interface SearchResult {
   date: string;
 }
 
-const ALL_RESULTS: SearchResult[] = [
-  { id: "1", fromName: "Vercel", subject: "Failed preview deployment on team 'Oliur Sahin's projects'", snippet: "A deployment has failed...", date: "5:58 PM" },
-  { id: "5", fromName: "me .. me", subject: "can't access billing page", snippet: "Hi, I can't access...", date: "Apr 2" },
-  { id: "6", fromName: "Dan Koe", subject: "I'm begging you to write more essays", snippet: "The world needs more...", date: "Apr 2" },
-  { id: "8", fromName: "Paul Sangiki-Ferrierie", subject: "cubic March update: #1 on Code Review Benchmark", snippet: "We're excited to share...", date: "Apr 2" },
-  { id: "9", fromName: "Google", subject: "Security alert", snippet: "A new sign-in was detected...", date: "Apr 2" },
-  { id: "12", fromName: "Superhuman", subject: "Meet Superhuman Go, the shortcut to done", snippet: "Introducing the fastest way...", date: "Apr 1" },
-];
+interface ThreadRow {
+  id: string;
+  gmailThreadId: string;
+  subject: string;
+  snippet: string;
+  fromName: string;
+  fromEmail: string;
+  date: string;
+  isRead: boolean;
+  messageCount: number;
+}
 
 export default function SearchOverlay(props: SearchOverlayProps) {
   const [query, setQuery] = createSignal("");
   const [selectedIndex, setSelectedIndex] = createSignal(0);
+  const [results, setResults] = createSignal<SearchResult[]>([]);
+  const [searching, setSearching] = createSignal(false);
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const results = () => {
-    const q = query().toLowerCase();
-    if (!q) return [];
-    return ALL_RESULTS.filter(
-      (r) =>
-        r.subject.toLowerCase().includes(q) ||
-        r.fromName.toLowerCase().includes(q) ||
-        r.snippet.toLowerCase().includes(q)
-    );
+  const doSearch = async (q: string) => {
+    if (!q.trim()) {
+      setResults([]);
+      return;
+    }
+    setSearching(true);
+    try {
+      const rows = await invoke<ThreadRow[]>("search_threads", { query: q });
+      if (q !== query()) return;
+      setResults(rows.map((r) => ({
+        id: r.id,
+        fromName: r.fromName,
+        subject: r.subject,
+        snippet: r.snippet,
+        date: r.date,
+      })));
+      setSelectedIndex(0);
+    } catch (e) {
+      console.error("Search failed:", e);
+      setResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const onInput = (value: string) => {
+    setQuery(value);
+    setSelectedIndex(0);
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => doSearch(value), 300);
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -46,7 +74,8 @@ export default function SearchOverlay(props: SearchOverlayProps) {
       setSelectedIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === "Enter" && results().length > 0) {
       e.preventDefault();
-      props.onSelectThread(results()[selectedIndex()].id);
+      const r = results()[selectedIndex()];
+      props.onSelectThread(r.id, r.subject);
       props.onClose();
     } else if (e.key === "Escape") {
       props.onClose();
@@ -70,13 +99,10 @@ export default function SearchOverlay(props: SearchOverlayProps) {
           <input
             type="text"
             value={query()}
-            onInput={(e) => {
-              setQuery(e.currentTarget.value);
-              setSelectedIndex(0);
-            }}
+            onInput={(e) => onInput(e.currentTarget.value)}
             onKeyDown={handleKeyDown}
             class="flex-1 bg-transparent text-[14px] text-black/80 outline-none placeholder:text-black/30"
-            placeholder="Search emails..."
+            placeholder="Search all emails..."
             autofocus
           />
           <kbd class="text-[10px] text-black/30 bg-black/[0.04] border border-black/[0.06] px-1.5 py-0.5 rounded-md font-mono">Esc</kbd>
@@ -94,7 +120,7 @@ export default function SearchOverlay(props: SearchOverlayProps) {
                       : "hover:bg-black/[0.03]"
                   }`}
                   onClick={() => {
-                    props.onSelectThread(result.id);
+                    props.onSelectThread(result.id, result.subject);
                     props.onClose();
                   }}
                 >
@@ -114,13 +140,19 @@ export default function SearchOverlay(props: SearchOverlayProps) {
           </div>
         </Show>
 
-        <Show when={query().length > 0 && results().length === 0}>
+        <Show when={searching()}>
+          <div class="px-4 py-6 text-center text-[13px] text-black/35">
+            Searching...
+          </div>
+        </Show>
+
+        <Show when={query().length > 0 && !searching() && results().length === 0}>
           <div class="px-4 py-6 text-center text-[13px] text-black/35">
             No results for "{query()}"
           </div>
         </Show>
 
-        <Show when={query().length === 0}>
+        <Show when={query().length === 0 && !searching()}>
           <div class="px-4 py-6 text-center text-[13px] text-black/35">
             Start typing to search...
           </div>

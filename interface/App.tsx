@@ -320,7 +320,25 @@ export default function App() {
   const selectAndOpen = (id: string) => {
     setSelectedId(id);
     const thread = threads().find((t) => t.id === id);
-    if (thread) setOpenThread({ id: thread.id, subject: thread.subject });
+    if (thread) {
+      setOpenThread({ id: thread.id, subject: thread.subject });
+      if (!thread.isRead) markThreadRead(id);
+    }
+  };
+
+  const markThreadRead = (threadId: string) => {
+    // Optimistic: mark as read in all caches immediately
+    setSplitThreads((prev) => {
+      const next: Record<string, ThreadRow[]> = {};
+      for (const [key, list] of Object.entries(prev)) {
+        next[key] = list.map((t) => t.id === threadId ? { ...t, isRead: true } : t);
+      }
+      return next;
+    });
+    // Fire API call in background
+    invoke("mark_thread_read", { threadId }).catch((e) =>
+      console.error("Failed to mark read:", e)
+    );
   };
 
   const navigateThread = (direction: 1 | -1) => {
@@ -394,6 +412,62 @@ export default function App() {
     }
   };
 
+  const trashThread = async (threadId: string) => {
+    const trashedThread = threads().find((t) => t.id === threadId);
+
+    // Compute next thread BEFORE removing from cache
+    const currentIds = threadIds();
+    const currentIdx = currentIds.indexOf(threadId);
+    let nextThread: { id: string; subject: string } | null = null;
+    if (currentIdx >= 0) {
+      const nextId = currentIds[currentIdx + 1] ?? currentIds[currentIdx - 1];
+      if (nextId) {
+        const t = threads().find((th) => th.id === nextId);
+        if (t) nextThread = { id: t.id, subject: t.subject };
+      }
+    }
+
+    // Optimistic: remove from all split caches
+    setSplitThreads((prev) => {
+      const next: Record<string, ThreadRow[]> = {};
+      for (const [key, list] of Object.entries(prev)) {
+        next[key] = list.filter((t) => t.id !== threadId);
+      }
+      return next;
+    });
+
+    // Optimistic: add to bin list
+    if (trashedThread) {
+      setBinThreads((prev) => [trashedThread, ...prev]);
+    }
+
+    // If viewing this thread, advance to next
+    if (openThread()?.id === threadId) {
+      setInlineReply(false);
+      if (nextThread) {
+        setOpenThread(nextThread);
+        setSelectedId(nextThread.id);
+      } else {
+        setOpenThread(null);
+        setSelectedId(null);
+      }
+    } else {
+      if (nextThread) {
+        setSelectedId(nextThread.id);
+      } else {
+        setSelectedId(null);
+      }
+    }
+
+    // Fire API call in background
+    try {
+      await invoke("trash_thread", { threadId });
+    } catch (e) {
+      console.error("Trash failed:", e);
+      loadAllSplits();
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await invoke("logout");
@@ -437,6 +511,12 @@ export default function App() {
       case "mark-done": {
         const tid = openThread()?.id ?? selectedId();
         if (tid) archiveThread(tid);
+        break;
+      }
+      case "delete":
+      case "trash": {
+        const tid = openThread()?.id ?? selectedId();
+        if (tid) trashThread(tid);
         break;
       }
     }
@@ -503,6 +583,12 @@ export default function App() {
         e.preventDefault();
         const id = openThread()?.id ?? selectedId();
         if (id) archiveThread(id);
+        break;
+      }
+      case "#": {
+        e.preventDefault();
+        const id = openThread()?.id ?? selectedId();
+        if (id) trashThread(id);
         break;
       }
       case "/": e.preventDefault(); setShowSearch(true); break;
@@ -837,7 +923,12 @@ export default function App() {
       <Show when={showSearch()}>
         <SearchPalette
           onClose={() => setShowSearch(false)}
-          onSelectThread={(id) => selectAndOpen(id)}
+          onSelectThread={(id, subject) => {
+            closeAllViews();
+            setSelectedId(id);
+            setOpenThread({ id, subject });
+            markThreadRead(id);
+          }}
         />
       </Show>
       <Show when={showCommandBar()}>

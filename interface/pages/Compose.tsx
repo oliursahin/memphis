@@ -1,4 +1,5 @@
 import { createSignal, Show } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 
 interface ComposeViewProps {
   onClose: () => void;
@@ -11,9 +12,30 @@ export default function ComposeView(props: ComposeViewProps) {
   const [showCc, setShowCc] = createSignal(false);
   const [cc, setCc] = createSignal("");
   const [bcc, setBcc] = createSignal("");
+  const [sending, setSending] = createSignal(false);
+  const [sendError, setSendError] = createSignal<string | null>(null);
 
-  const handleSend = () => {
-    props.onClose();
+  const handleSend = async () => {
+    if (sending() || !to().trim() || !body().trim()) return;
+
+    setSending(true);
+    setSendError(null);
+
+    try {
+      await invoke("send_email", {
+        to: to().trim(),
+        cc: cc().trim() || null,
+        bcc: bcc().trim() || null,
+        subject: subject(),
+        body: body(),
+      });
+      props.onClose();
+    } catch (e) {
+      console.error("Send failed:", e);
+      setSendError(typeof e === "string" ? e : "Failed to send email");
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -39,13 +61,25 @@ export default function ComposeView(props: ComposeViewProps) {
 
         <div class="flex-1" />
 
-        <span class="text-[11px] text-zinc-400 mr-2">⌘ Enter to send</span>
+        <Show when={sendError()}>
+          <span class="text-[12px] text-red-500 mr-2">{sendError()}</span>
+        </Show>
+        <span class="text-[11px] text-zinc-400 mr-3">
+          ⌘ Enter to send · Esc to discard
+        </span>
+        <button
+          onClick={handleSend}
+          disabled={sending() || !to().trim() || !body().trim()}
+          class="px-3 py-1 rounded-md border border-zinc-200 text-[12px] text-zinc-500 hover:text-zinc-800 hover:border-zinc-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+        >
+          {sending() ? "Sending..." : "Send"}
+        </button>
       </div>
 
       {/* Compose area */}
-      <div class="flex-1 overflow-y-auto px-20">
+      <div class="flex-1 flex flex-col overflow-y-auto px-20">
         {/* To */}
-        <div class="flex items-center gap-3 py-2">
+        <div class="flex items-center gap-3 py-2 flex-shrink-0">
           <label class="text-[13px] text-zinc-400 w-10">To</label>
           <input
             type="text"
@@ -57,35 +91,44 @@ export default function ComposeView(props: ComposeViewProps) {
           />
           <button
             onClick={() => setShowCc(!showCc())}
-            class="text-[12px] text-zinc-400 hover:text-zinc-600 transition-colors"
+            class="text-zinc-400 hover:text-zinc-600 transition-colors p-0.5 flex-shrink-0"
+            title={showCc() ? "Hide Cc/Bcc" : "Show Cc/Bcc"}
           >
-            Cc/Bcc
+            <svg
+              width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor"
+              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+              class={`transition-transform ${showCc() ? "rotate-180" : ""}`}
+            >
+              <path d="M3 4.5L6 7.5L9 4.5" />
+            </svg>
           </button>
         </div>
 
         <Show when={showCc()}>
-          <div class="flex items-center gap-3 py-2">
+          <div class="flex items-center gap-3 py-2 flex-shrink-0">
             <label class="text-[13px] text-zinc-400 w-10">Cc</label>
             <input
               type="text"
               value={cc()}
               onInput={(e) => setCc(e.currentTarget.value)}
               class="flex-1 bg-transparent text-[14px] text-zinc-800 outline-none placeholder:text-zinc-300"
+              placeholder="cc@example.com"
             />
           </div>
-          <div class="flex items-center gap-3 py-2">
+          <div class="flex items-center gap-3 py-2 flex-shrink-0">
             <label class="text-[13px] text-zinc-400 w-10">Bcc</label>
             <input
               type="text"
               value={bcc()}
               onInput={(e) => setBcc(e.currentTarget.value)}
               class="flex-1 bg-transparent text-[14px] text-zinc-800 outline-none placeholder:text-zinc-300"
+              placeholder="bcc@example.com"
             />
           </div>
         </Show>
 
         {/* Subject */}
-        <div class="py-2">
+        <div class="py-2 flex-shrink-0">
           <input
             type="text"
             value={subject()}
@@ -99,9 +142,18 @@ export default function ComposeView(props: ComposeViewProps) {
         <textarea
           value={body()}
           onInput={(e) => setBody(e.currentTarget.value)}
-          class="w-full min-h-[300px] mt-4 bg-transparent text-[14px] text-zinc-800 leading-[1.7] outline-none resize-none placeholder:text-zinc-300"
+          class="flex-1 min-h-[200px] mt-4 bg-transparent text-[14px] text-zinc-800 leading-[1.7] outline-none resize-none placeholder:text-zinc-300 disabled:opacity-50"
           placeholder="Write your message..."
+          disabled={sending()}
         />
+
+        {/* Signature preview */}
+        <div class="flex-shrink-0 pb-6 pt-2">
+          <div class="text-[13px] text-zinc-400 leading-relaxed">
+            ---<br />
+            Sent with Memphis
+          </div>
+        </div>
       </div>
     </div>
   );

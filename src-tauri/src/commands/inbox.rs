@@ -57,11 +57,12 @@ pub async fn list_inbox(
     // Fetch threads from Gmail, filtered by label or query
     let limit = max_results.unwrap_or(30);
     let list = if let Some(q) = &query {
-        // Don't prepend in:inbox for label queries or queries that manage their own scope
-        let full_query = if q.starts_with("label:") || q.contains("in:") || q.contains("-in:") {
-            q.clone()
-        } else {
+        // Only prepend in:inbox for category split queries — all other queries
+        // (search, label:, in:*) either manage their own scope or should search globally
+        let full_query = if q.starts_with("category:") {
             format!("in:inbox {q}")
+        } else {
+            q.clone()
         };
         log::info!("list_inbox query: {full_query}");
         client.list_threads(Some(&full_query), limit, None, None).await?
@@ -239,6 +240,141 @@ pub async fn archive_thread(
     client.modify_thread(&thread_id, &[], &["INBOX"]).await?;
     log::info!("Archived thread {thread_id}");
     Ok(())
+}
+
+/// Move a thread to trash in Gmail.
+#[tauri::command]
+pub async fn trash_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<(), Error> {
+    let account_id = {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        conn.query_row(
+            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|_| Error::Auth("No active account.".into()))?
+    };
+
+    let token = oauth::get_valid_token(&state.db, &account_id).await?;
+    let client = GmailClient::new(token);
+    client.modify_thread(&thread_id, &["TRASH"], &["INBOX"]).await?;
+    log::info!("Trashed thread {thread_id}");
+    Ok(())
+}
+
+/// Mark a thread as read (remove UNREAD label in Gmail).
+#[tauri::command]
+pub async fn mark_thread_read(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<(), Error> {
+    let account_id = {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        conn.query_row(
+            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|_| Error::Auth("No active account.".into()))?
+    };
+
+    let token = oauth::get_valid_token(&state.db, &account_id).await?;
+    let client = GmailClient::new(token);
+    client.modify_thread(&thread_id, &[], &["UNREAD"]).await?;
+    log::info!("Marked thread {thread_id} as read");
+    Ok(())
+}
+
+// ── Fast search (lightweight, 10 results max, high concurrency) ──
+
+#[tauri::command]
+pub async fn search_threads(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Vec<ThreadRow>, Error> {
+    if query.trim().is_empty() {
+        return Ok(vec![]);
+    }
+
+    let account_id = {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        conn.query_row(
+            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|_| Error::Auth("No active account.".into()))?
+    };
+
+    let token = oauth::get_valid_token(&state.db, &account_id).await?;
+    let client = GmailClient::new(token);
+
+    let list = client.list_threads(Some(&query), 10, None, None).await?;
+    let stubs = list.threads.unwrap_or_default();
+
+    // Fetch all 10 in parallel — metadata only, very fast
+    let results: Vec<Option<ThreadRow>> = stream::iter(stubs)
+        .map(|stub| {
+            let client = client.clone();
+            async move {
+                let snippet_text = stub.snippet.unwrap_or_default();
+                match client.get_thread(&stub.id).await {
+                    Ok(thread) => {
+                        let messages = thread.messages.unwrap_or_default();
+                        if messages.is_empty() {
+                            return None;
+                        }
+                        let last_msg = messages.last().unwrap();
+                        let first_msg = messages.first().unwrap();
+
+                        let subject = first_msg
+                            .get_header("Subject")
+                            .unwrap_or("(no subject)")
+                            .to_string();
+                        let from_raw = last_msg.get_header("From").unwrap_or("");
+                        let (from_name, from_email) = parse_from(from_raw);
+
+                        let date_display = last_msg
+                            .internal_date
+                            .as_ref()
+                            .and_then(|d| d.parse::<i64>().ok())
+                            .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms))
+                            .map(|dt| dt.format("%b %d").to_string())
+                            .unwrap_or_default();
+
+                        let is_read = last_msg
+                            .label_ids
+                            .as_ref()
+                            .map(|labels| !labels.iter().any(|l| l == "UNREAD"))
+                            .unwrap_or(true);
+
+                        Some(ThreadRow {
+                            id: thread.id.clone(),
+                            gmail_thread_id: thread.id,
+                            subject,
+                            snippet: snippet_text,
+                            from_name,
+                            from_email,
+                            date: date_display,
+                            is_read,
+                            message_count: messages.len() as u32,
+                        })
+                    }
+                    Err(e) => {
+                        log::warn!("Search: failed to fetch thread {}: {e}", stub.id);
+                        None
+                    }
+                }
+            }
+        })
+        .buffered(10)
+        .collect()
+        .await;
+
+    Ok(results.into_iter().flatten().collect())
 }
 
 // ── Thread detail (full message bodies) ──
@@ -498,6 +634,97 @@ fn sanitize_html(raw: &str) -> String {
         .to_string()
 }
 
+/// Send a new email (not a reply).
+#[tauri::command]
+pub async fn send_email(
+    state: State<'_, AppState>,
+    to: String,
+    cc: Option<String>,
+    bcc: Option<String>,
+    subject: String,
+    body: String,
+) -> Result<(), Error> {
+    let (account_id, from_email, from_name) = {
+        let conn = state
+            .db
+            .lock()
+            .map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        let row: (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT id, email, display_name FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|_| Error::Auth("No active account.".into()))?;
+        row
+    };
+
+    let token = oauth::get_valid_token(&state.db, &account_id).await?;
+    let client = GmailClient::new(token);
+
+    let from_display = sanitize_header(&from_name.unwrap_or_else(|| from_email.clone()));
+    let from_email = sanitize_header(&from_email);
+    let to = sanitize_header(&to);
+    let subject = sanitize_header(&subject);
+    let date = chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S %z").to_string();
+
+    let body_with_sig = format!("{body}\n\n---\nSent with Memphis");
+    let body_plain = body_with_sig.clone();
+    let body_html = body_with_sig
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\n', "<br>");
+
+    let boundary = format!("----=_Part_{}", uuid::Uuid::new_v4().as_simple());
+
+    let mut headers = format!(
+        "From: {from_display} <{from_email}>\r\n\
+         To: {to}\r\n"
+    );
+    if let Some(cc_val) = &cc {
+        let cc_val = sanitize_header(cc_val);
+        if !cc_val.trim().is_empty() {
+            headers.push_str(&format!("Cc: {cc_val}\r\n"));
+        }
+    }
+    if let Some(bcc_val) = &bcc {
+        let bcc_val = sanitize_header(bcc_val);
+        if !bcc_val.trim().is_empty() {
+            headers.push_str(&format!("Bcc: {bcc_val}\r\n"));
+        }
+    }
+    headers.push_str(&format!(
+        "Subject: {subject}\r\n\
+         Date: {date}\r\n\
+         MIME-Version: 1.0\r\n\
+         Content-Type: multipart/alternative; boundary=\"{boundary}\"\r\n"
+    ));
+
+    let raw_message = format!(
+        "{headers}\r\n\
+         --{boundary}\r\n\
+         Content-Type: text/plain; charset=UTF-8\r\n\
+         Content-Transfer-Encoding: base64\r\n\
+         \r\n\
+         {plain_b64}\r\n\
+         --{boundary}\r\n\
+         Content-Type: text/html; charset=UTF-8\r\n\
+         Content-Transfer-Encoding: base64\r\n\
+         \r\n\
+         {html_b64}\r\n\
+         --{boundary}--",
+         plain_b64 = STANDARD.encode(body_plain.as_bytes()),
+         html_b64 = STANDARD.encode(body_html.as_bytes()),
+    );
+
+    let encoded = URL_SAFE_NO_PAD.encode(raw_message.as_bytes());
+    client.send_message(&encoded).await?;
+    log::info!("Sent new email to {to}");
+
+    Ok(())
+}
+
 /// Send a reply to the last message in a thread.
 #[tauri::command]
 pub async fn send_reply(
@@ -537,8 +764,9 @@ pub async fn send_reply(
     let date = chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S %z").to_string();
 
     // Escape body for plain text, and produce a simple HTML version
-    let body_plain = body.clone();
-    let body_html = body
+    let body_with_sig = format!("{body}\n\n---\nSent with Memphis");
+    let body_plain = body_with_sig.clone();
+    let body_html = body_with_sig
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
