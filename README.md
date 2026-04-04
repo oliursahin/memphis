@@ -1,6 +1,4 @@
 memphis- an email client desinged for me
 
 
-<img width="1192" height="741" alt="Screenshot 2026-02-26 at 8 23 58 PM" src="https://github.com/user-attachments/assets/332e30b3-747b-46db-87a7-66461586a3dc" />
-
-
+<img width="1192" height="796" alt="Screenshot 2026-04-03 at 9 35 15 PM" src="https://github.com/user-attachments/assets/5700b0c4-2efe-4e89-aec2-9098db8b3ed5" />
