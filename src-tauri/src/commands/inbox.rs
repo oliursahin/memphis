@@ -247,6 +247,58 @@ pub async fn list_inbox(
 
 
 
+// ── Unread counts ──
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SplitQueryInput {
+    pub id: String,
+    pub query: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SplitUnreadCount {
+    pub id: String,
+    pub count: u32,
+}
+
+/// Get accurate unread thread counts per split by querying Gmail with `is:unread`.
+/// Uses `result_size_estimate` from a minimal request (maxResults=1) to avoid
+/// fetching full thread metadata.
+#[tauri::command]
+pub async fn get_unread_counts(
+    state: State<'_, AppState>,
+    splits: Vec<SplitQueryInput>,
+) -> Result<Vec<SplitUnreadCount>, Error> {
+    let client = get_gmail_client(&state).await?;
+
+    let results: Vec<SplitUnreadCount> = stream::iter(splits)
+        .map(|split| {
+            let client = client.clone();
+            async move {
+                let query = format!("{} is:unread", split.query);
+                match client.list_threads(Some(&query), 1, None, None).await {
+                    Ok(resp) => SplitUnreadCount {
+                        id: split.id,
+                        count: resp.result_size_estimate.unwrap_or(0),
+                    },
+                    Err(e) => {
+                        log::warn!("Failed to get unread count for {}: {e}", split.id);
+                        SplitUnreadCount {
+                            id: split.id,
+                            count: 0,
+                        }
+                    }
+                }
+            }
+        })
+        .buffered(5)
+        .collect()
+        .await;
+
+    Ok(results)
+}
+
 /// Archive a thread (remove INBOX label in Gmail).
 #[tauri::command]
 pub async fn archive_thread(

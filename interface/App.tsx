@@ -43,12 +43,16 @@ export default function App() {
   const threads = () => splitThreads()[activeTab()] ?? [];
   const loadingInbox = () => loadingSplits().has(activeTab());
 
-  // Derive unread counts reactively from cached thread data so badge matches the list
+  // Extra unread threads beyond the cached first page (computed from server counts)
+  const [extraUnread, setExtraUnread] = createSignal<Record<string, number>>({});
+
+  // Derive unread counts: cached count + extra beyond page 1
   const unreadCounts = () => {
     const all = splitThreads();
+    const extra = extraUnread();
     const out: Record<string, number> = {};
     for (const [id, list] of Object.entries(all)) {
-      out[id] = list.filter((t) => !t.isRead).length;
+      out[id] = list.filter((t) => !t.isRead).length + (extra[id] ?? 0);
     }
     return out;
   };
@@ -154,6 +158,31 @@ export default function App() {
         }
       })
     );
+
+    // Fetch accurate unread counts now that the cache is populated
+    fetchUnreadCounts();
+  };
+
+  // Fetch accurate unread counts from server and compute the delta beyond the cache
+  const fetchUnreadCounts = async () => {
+    const allSplits = splits();
+    if (allSplits.length === 0) return;
+    const queries = allSplits
+      .map((s) => ({ id: s.id, query: buildQueryForSplit(s.id) ?? "" }))
+      .filter((q) => q.query !== "");
+    if (queries.length === 0) return;
+    try {
+      const counts = await invoke<{ id: string; count: number }[]>("get_unread_counts", { splits: queries });
+      const cache = splitThreads();
+      const extra: Record<string, number> = {};
+      for (const { id, count } of counts) {
+        const cachedUnread = (cache[id] ?? []).filter((t) => !t.isRead).length;
+        extra[id] = Math.max(0, count - cachedUnread);
+      }
+      setExtraUnread(extra);
+    } catch (e) {
+      console.error("Failed to fetch unread counts:", e);
+    }
   };
 
   // Switching tabs is instant — data already in cache
