@@ -1,23 +1,29 @@
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, onMount, For, Show } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
+
+interface Account {
+  id: string;
+  email: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  provider: string;
+  isActive: boolean;
+}
 
 interface SettingsProps {
   onBack: () => void;
+  onAccountsChanged?: () => void;
 }
 
-type Section = "general" | "accounts" | "signature" | "snippets" | "shortcuts" | "appearance" | "notifications";
+type Section = "accounts" | "shortcuts";
 
 const NAV: { id: Section; label: string }[] = [
-  { id: "general", label: "General" },
   { id: "accounts", label: "Accounts" },
-  { id: "signature", label: "Signature" },
-  { id: "snippets", label: "Snippets" },
   { id: "shortcuts", label: "Shortcuts" },
-  { id: "appearance", label: "Appearance" },
-  { id: "notifications", label: "Notifications" },
 ];
 
 export default function Settings(props: SettingsProps) {
-  const [section, setSection] = createSignal<Section>("general");
+  const [section, setSection] = createSignal<Section>("accounts");
 
   return (
     <div class="h-full flex flex-col">
@@ -54,26 +60,11 @@ export default function Settings(props: SettingsProps) {
 
         {/* Content */}
         <div class="flex-1 min-w-0 overflow-y-auto">
-          <Show when={section() === "general"}>
-            <GeneralSection />
-          </Show>
           <Show when={section() === "accounts"}>
-            <AccountsSection />
-          </Show>
-          <Show when={section() === "signature"}>
-            <SignatureSection />
-          </Show>
-          <Show when={section() === "snippets"}>
-            <SnippetsSection />
+            <AccountsSection onAccountsChanged={props.onAccountsChanged} />
           </Show>
           <Show when={section() === "shortcuts"}>
             <ShortcutsSection />
-          </Show>
-          <Show when={section() === "appearance"}>
-            <AppearanceSection />
-          </Show>
-          <Show when={section() === "notifications"}>
-            <NotificationsSection />
           </Show>
         </div>
       </div>
@@ -94,297 +85,96 @@ function SectionTitle(props: { title: string; description?: string }) {
   );
 }
 
-function SettingRow(props: { label: string; description?: string; children: any }) {
-  return (
-    <div class="flex items-center justify-between py-3 border-b border-zinc-100">
-      <div class="min-w-0 mr-4">
-        <div class="text-[13px] text-zinc-700">{props.label}</div>
-        <Show when={props.description}>
-          <div class="text-[12px] text-zinc-400 mt-0.5">{props.description}</div>
-        </Show>
-      </div>
-      <div class="flex-shrink-0">{props.children}</div>
-    </div>
-  );
-}
+function AccountsSection(props: { onAccountsChanged?: () => void }) {
+  const [accounts, setAccounts] = createSignal<Account[]>([]);
+  const [loading, setLoading] = createSignal(true);
+  const [adding, setAdding] = createSignal(false);
 
-function Toggle(props: { checked: boolean; onChange?: (v: boolean) => void }) {
-  return (
-    <button
-      onClick={() => props.onChange?.(!props.checked)}
-      class={`w-8 h-[18px] rounded-full transition-colors cursor-pointer ${
-        props.checked ? "bg-zinc-800" : "bg-zinc-200"
-      }`}
-    >
-      <div
-        class={`w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-transform mx-0.5 ${
-          props.checked ? "translate-x-3.5" : "translate-x-0"
-        }`}
-      />
-    </button>
-  );
-}
+  const fetchAccounts = async () => {
+    try {
+      const result = await invoke<Account[]>("get_accounts");
+      setAccounts(result);
+    } catch (e) {
+      console.error("Failed to fetch accounts:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-function GeneralSection() {
-  const [autoAdvance, setAutoAdvance] = createSignal(true);
-  const [undoSend, setUndoSend] = createSignal(true);
-  const [undoDelay, setUndoDelay] = createSignal("5");
+  const disconnectAccount = async (accountId: string) => {
+    try {
+      await invoke("disconnect_account", { accountId });
+      setAccounts((prev) => prev.filter((a) => a.id !== accountId));
+      props.onAccountsChanged?.();
+    } catch (e) {
+      console.error("Failed to disconnect account:", e);
+    }
+  };
 
-  return (
-    <div>
-      <SectionTitle title="General" description="Core behavior and email defaults" />
-      <SettingRow label="Auto-advance" description="Move to next conversation after archiving">
-        <Toggle checked={autoAdvance()} onChange={setAutoAdvance} />
-      </SettingRow>
-      <SettingRow label="Undo send" description="Allow cancelling sent emails">
-        <Toggle checked={undoSend()} onChange={setUndoSend} />
-      </SettingRow>
-      <Show when={undoSend()}>
-        <SettingRow label="Undo send delay" description="Seconds to cancel after sending">
-          <select
-            value={undoDelay()}
-            onChange={(e) => setUndoDelay(e.currentTarget.value)}
-            class="text-[13px] text-zinc-700 bg-white border border-zinc-200 rounded-md px-2 py-1 outline-none"
-          >
-            <option value="5">5s</option>
-            <option value="10">10s</option>
-            <option value="30">30s</option>
-          </select>
-        </SettingRow>
-      </Show>
-      <SettingRow label="Default send behavior" description="Send with Enter or Cmd+Enter">
-        <select class="text-[13px] text-zinc-700 bg-white border border-zinc-200 rounded-md px-2 py-1 outline-none">
-          <option>⌘ Enter</option>
-          <option>Enter</option>
-        </select>
-      </SettingRow>
-    </div>
-  );
-}
+  const addAccount = async () => {
+    setAdding(true);
+    try {
+      await invoke("start_oauth_flow");
+      await fetchAccounts();
+      props.onAccountsChanged?.();
+    } catch (e) {
+      console.error("Failed to add account:", e);
+    } finally {
+      setAdding(false);
+    }
+  };
 
-function AccountsSection() {
+  const getInitials = (account: Account): string => {
+    const name = account.displayName || account.email.split("@")[0];
+    const parts = name.trim().split(/\s+/);
+    return parts.length >= 2
+      ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+      : name.slice(0, 2).toUpperCase();
+  };
+
+  onMount(fetchAccounts);
+
   return (
     <div>
       <SectionTitle title="Accounts" description="Connected email accounts" />
-      <div class="border border-zinc-200 rounded-lg p-4 flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center text-[12px] font-medium text-zinc-500">G</div>
-          <div>
-            <div class="text-[13px] text-zinc-700 font-medium">sahin@zestral.ai</div>
-            <div class="text-[12px] text-zinc-400">Google · Connected</div>
-          </div>
+      <Show when={!loading()} fallback={
+        <div class="text-[13px] text-zinc-400">Loading accounts...</div>
+      }>
+        <div class="space-y-2">
+          <For each={accounts()}>
+            {(account) => (
+              <div class="border border-zinc-200 rounded-lg p-4 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center text-[12px] font-medium text-zinc-500">
+                    {getInitials(account)}
+                  </div>
+                  <div>
+                    <div class="text-[13px] text-zinc-700 font-medium">{account.email}</div>
+                    <div class="text-[12px] text-zinc-400">
+                      {account.provider.charAt(0).toUpperCase() + account.provider.slice(1)} · Connected
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => disconnectAccount(account.id)}
+                  class="text-[12px] text-zinc-400 hover:text-red-500 transition-colors cursor-pointer"
+                >
+                  Disconnect
+                </button>
+              </div>
+            )}
+          </For>
         </div>
-        <button class="text-[12px] text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer">Disconnect</button>
-      </div>
-      <button class="mt-4 text-[13px] text-zinc-500 hover:text-zinc-700 transition-colors cursor-pointer">
-        + Add account
-      </button>
-    </div>
-  );
-}
-
-function SignatureSection() {
-  const [signatures, setSignatures] = createSignal([
-    { id: "1", name: "Default", body: "Best,\nOliur Sahin", isDefault: true },
-  ]);
-  const [editing, setEditing] = createSignal<string | null>(null);
-  const [autoInsert, setAutoInsert] = createSignal(true);
-
-  const addSignature = () => {
-    const id = String(Date.now());
-    setSignatures((prev) => [...prev, { id, name: "", body: "", isDefault: false }]);
-    setEditing(id);
-  };
-
-  const removeSignature = (id: string) => {
-    setSignatures((prev) => prev.filter((s) => s.id !== id));
-  };
-
-  const updateSignature = (id: string, field: string, value: string | boolean) => {
-    setSignatures((prev) => prev.map((s) => s.id === id ? { ...s, [field]: value } : s));
-  };
-
-  const setDefault = (id: string) => {
-    setSignatures((prev) => prev.map((s) => ({ ...s, isDefault: s.id === id })));
-  };
-
-  return (
-    <div>
-      <SectionTitle title="Signature" description="Email signatures appended to outgoing messages" />
-      <SettingRow label="Auto-insert signature" description="Automatically add signature to new emails and replies">
-        <Toggle checked={autoInsert()} onChange={setAutoInsert} />
-      </SettingRow>
-
-      <div class="mt-4 space-y-2">
-        <For each={signatures()}>
-          {(sig) => (
-            <div class={`border rounded-lg p-3 ${sig.isDefault ? "border-zinc-300" : "border-zinc-200"}`}>
-              <Show when={editing() === sig.id} fallback={
-                <div class="flex items-start justify-between">
-                  <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-2">
-                      <span class="text-[13px] font-medium text-zinc-700">{sig.name || "Untitled"}</span>
-                      <Show when={sig.isDefault}>
-                        <span class="text-[10px] text-zinc-400 bg-zinc-100 px-1.5 py-0.5 rounded">Default</span>
-                      </Show>
-                    </div>
-                    <pre class="text-[12px] text-zinc-400 mt-1 font-sans whitespace-pre-wrap">{sig.body}</pre>
-                  </div>
-                  <div class="flex items-center gap-2 flex-shrink-0 ml-3">
-                    <Show when={!sig.isDefault}>
-                      <button
-                        onClick={() => setDefault(sig.id)}
-                        class="text-[12px] text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
-                      >
-                        Set default
-                      </button>
-                    </Show>
-                    <button
-                      onClick={() => setEditing(sig.id)}
-                      class="text-[12px] text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => removeSignature(sig.id)}
-                      class="text-[12px] text-zinc-400 hover:text-red-500 transition-colors cursor-pointer"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              }>
-                <div class="space-y-2">
-                  <input
-                    value={sig.name}
-                    onInput={(e) => updateSignature(sig.id, "name", e.currentTarget.value)}
-                    placeholder="Signature name"
-                    class="w-full text-[13px] text-zinc-700 bg-white border border-zinc-200 rounded-md px-2 py-1 outline-none focus:border-zinc-400"
-                  />
-                  <textarea
-                    value={sig.body}
-                    onInput={(e) => updateSignature(sig.id, "body", e.currentTarget.value)}
-                    placeholder="Signature content…"
-                    rows={4}
-                    class="w-full text-[13px] text-zinc-700 bg-white border border-zinc-200 rounded-md px-2 py-1.5 outline-none focus:border-zinc-400 resize-none"
-                  />
-                  <button
-                    onClick={() => setEditing(null)}
-                    class="text-[12px] text-zinc-500 hover:text-zinc-700 transition-colors cursor-pointer"
-                  >
-                    Done
-                  </button>
-                </div>
-              </Show>
-            </div>
-          )}
-        </For>
-      </div>
+        <Show when={accounts().length === 0}>
+          <div class="text-[13px] text-zinc-400 mb-3">No accounts connected</div>
+        </Show>
+      </Show>
       <button
-        onClick={addSignature}
-        class="mt-3 text-[13px] text-zinc-500 hover:text-zinc-700 transition-colors cursor-pointer"
+        onClick={addAccount}
+        disabled={adding()}
+        class="mt-4 text-[13px] text-zinc-500 hover:text-zinc-700 transition-colors cursor-pointer disabled:opacity-50"
       >
-        + Add signature
-      </button>
-    </div>
-  );
-}
-
-function SnippetsSection() {
-  const [snippets, setSnippets] = createSignal([
-    { id: "1", name: "Thanks", shortcut: ";thanks", body: "Thanks for getting back to me. I really appreciate it!" },
-    { id: "2", name: "Follow up", shortcut: ";followup", body: "Just following up on this — let me know if you need anything else from my end." },
-    { id: "3", name: "Intro", shortcut: ";intro", body: "I'd like to introduce you to {name}. I think you'd really enjoy connecting." },
-  ]);
-  const [editing, setEditing] = createSignal<string | null>(null);
-
-  const removeSnippet = (id: string) => {
-    setSnippets((prev) => prev.filter((s) => s.id !== id));
-  };
-
-  const addSnippet = () => {
-    const id = String(Date.now());
-    setSnippets((prev) => [...prev, { id, name: "", shortcut: ";", body: "" }]);
-    setEditing(id);
-  };
-
-  const updateSnippet = (id: string, field: string, value: string) => {
-    setSnippets((prev) => prev.map((s) => s.id === id ? { ...s, [field]: value } : s));
-  };
-
-  return (
-    <div>
-      <SectionTitle title="Snippets" description="Text shortcuts you can insert while composing. Type the shortcut to expand." />
-      <div class="space-y-2">
-        <For each={snippets()}>
-          {(snippet) => (
-            <div class="border border-zinc-200 rounded-lg p-3">
-              <Show when={editing() === snippet.id} fallback={
-                <div class="flex items-start justify-between">
-                  <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-2">
-                      <span class="text-[13px] font-medium text-zinc-700">{snippet.name || "Untitled"}</span>
-                      <kbd class="text-[11px] text-zinc-400 bg-zinc-50 border border-zinc-200 px-1.5 py-0.5 rounded font-mono">
-                        {snippet.shortcut}
-                      </kbd>
-                    </div>
-                    <p class="text-[12px] text-zinc-400 mt-1 line-clamp-2">{snippet.body}</p>
-                  </div>
-                  <div class="flex items-center gap-2 flex-shrink-0 ml-3">
-                    <button
-                      onClick={() => setEditing(snippet.id)}
-                      class="text-[12px] text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => removeSnippet(snippet.id)}
-                      class="text-[12px] text-zinc-400 hover:text-red-500 transition-colors cursor-pointer"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              }>
-                <div class="space-y-2">
-                  <div class="flex gap-2">
-                    <input
-                      value={snippet.name}
-                      onInput={(e) => updateSnippet(snippet.id, "name", e.currentTarget.value)}
-                      placeholder="Name"
-                      class="flex-1 text-[13px] text-zinc-700 bg-white border border-zinc-200 rounded-md px-2 py-1 outline-none focus:border-zinc-400"
-                    />
-                    <input
-                      value={snippet.shortcut}
-                      onInput={(e) => updateSnippet(snippet.id, "shortcut", e.currentTarget.value)}
-                      placeholder=";shortcut"
-                      class="w-28 text-[13px] text-zinc-700 bg-white border border-zinc-200 rounded-md px-2 py-1 outline-none focus:border-zinc-400 font-mono"
-                    />
-                  </div>
-                  <textarea
-                    value={snippet.body}
-                    onInput={(e) => updateSnippet(snippet.id, "body", e.currentTarget.value)}
-                    placeholder="Snippet body text…"
-                    rows={3}
-                    class="w-full text-[13px] text-zinc-700 bg-white border border-zinc-200 rounded-md px-2 py-1.5 outline-none focus:border-zinc-400 resize-none"
-                  />
-                  <button
-                    onClick={() => setEditing(null)}
-                    class="text-[12px] text-zinc-500 hover:text-zinc-700 transition-colors cursor-pointer"
-                  >
-                    Done
-                  </button>
-                </div>
-              </Show>
-            </div>
-          )}
-        </For>
-      </div>
-      <button
-        onClick={addSnippet}
-        class="mt-3 text-[13px] text-zinc-500 hover:text-zinc-700 transition-colors cursor-pointer"
-      >
-        + Add snippet
+        {adding() ? "Connecting..." : "+ Add account"}
       </button>
     </div>
   );
@@ -421,83 +211,6 @@ function ShortcutsSection() {
           )}
         </For>
       </div>
-    </div>
-  );
-}
-
-function AppearanceSection() {
-  const [theme, setTheme] = createSignal("light");
-
-  return (
-    <div>
-      <SectionTitle title="Appearance" description="Visual preferences" />
-      <SettingRow label="Theme">
-        <select
-          value={theme()}
-          onChange={(e) => setTheme(e.currentTarget.value)}
-          class="text-[13px] text-zinc-700 bg-white border border-zinc-200 rounded-md px-2 py-1 outline-none"
-        >
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-          <option value="system">System</option>
-        </select>
-      </SettingRow>
-      <SettingRow label="Font size">
-        <select class="text-[13px] text-zinc-700 bg-white border border-zinc-200 rounded-md px-2 py-1 outline-none">
-          <option>Small</option>
-          <option selected>Default</option>
-          <option>Large</option>
-        </select>
-      </SettingRow>
-    </div>
-  );
-}
-
-function NotificationsSection() {
-  const [desktop, setDesktop] = createSignal(true);
-  const [sound, setSound] = createSignal(false);
-  const [badge, setBadge] = createSignal(true);
-  const [importantOnly, setImportantOnly] = createSignal(false);
-  const [threadReplies, setThreadReplies] = createSignal(true);
-  const [snooze, setSnooze] = createSignal(false);
-  const [snoozeSchedule, setSnoozeSchedule] = createSignal("off");
-
-  return (
-    <div>
-      <SectionTitle title="Notifications" description="How Memphis alerts you" />
-      <SettingRow label="Desktop notifications" description="Show system notifications for new mail">
-        <Toggle checked={desktop()} onChange={setDesktop} />
-      </SettingRow>
-      <SettingRow label="Sound" description="Play a sound on new mail">
-        <Toggle checked={sound()} onChange={setSound} />
-      </SettingRow>
-      <SettingRow label="Dock badge" description="Show unread count on app icon">
-        <Toggle checked={badge()} onChange={setBadge} />
-      </SettingRow>
-      <SettingRow label="Important only" description="Only notify for emails classified as important">
-        <Toggle checked={importantOnly()} onChange={setImportantOnly} />
-      </SettingRow>
-      <SettingRow label="Thread replies" description="Notify when someone replies to a thread you're in">
-        <Toggle checked={threadReplies()} onChange={setThreadReplies} />
-      </SettingRow>
-      <SettingRow label="Do Not Disturb" description="Pause all notifications on a schedule">
-        <Toggle checked={snooze()} onChange={setSnooze} />
-      </SettingRow>
-      <Show when={snooze()}>
-        <SettingRow label="DND schedule" description="Automatically silence during these hours">
-          <select
-            value={snoozeSchedule()}
-            onChange={(e) => setSnoozeSchedule(e.currentTarget.value)}
-            class="text-[13px] text-zinc-700 bg-white border border-zinc-200 rounded-md px-2 py-1 outline-none"
-          >
-            <option value="off">Off</option>
-            <option value="evening">6 PM – 8 AM</option>
-            <option value="night">10 PM – 7 AM</option>
-            <option value="weekend">Weekends</option>
-            <option value="custom">Custom</option>
-          </select>
-        </SettingRow>
-      </Show>
     </div>
   );
 }
