@@ -98,16 +98,20 @@ impl SyncEngine {
                 // Try incremental sync; fall back to re-seed on 404 (expired historyId)
                 match gmail_sync::incremental_sync(&self.db, &account_id, cp).await {
                     Ok(result) => {
-                        if result.has_changes() {
-                            Ok(Some(SyncEvent {
+                        let event = if result.has_changes() {
+                            Some(SyncEvent {
                                 event_type: "threads_changed".into(),
                                 changed_thread_ids: result.changed_thread_ids,
-                            }))
+                            })
                         } else {
-                            Ok(None)
-                        }
+                            None
+                        };
+                        // Advance checkpoint only after we've built the event
+                        // (emit happens in the caller after this returns)
+                        gmail_sync::advance_checkpoint(&self.db, &account_id, &result.new_history_id)?;
+                        Ok(event)
                     }
-                    Err(Error::Internal(msg)) if msg.contains("404") => {
+                    Err(Error::NotFound(_)) => {
                         log::warn!("History expired, re-seeding checkpoint");
                         gmail_sync::seed_checkpoint(&self.db, &account_id).await?;
                         Ok(None)

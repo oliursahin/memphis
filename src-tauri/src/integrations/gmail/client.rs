@@ -24,6 +24,9 @@ impl GmailClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
+            if status == reqwest::StatusCode::NOT_FOUND {
+                return Err(Error::NotFound(format!("Gmail API 404: {body}")));
+            }
             return Err(Error::Internal(format!("Gmail API {status}: {body}")));
         }
         Ok(resp.json().await?)

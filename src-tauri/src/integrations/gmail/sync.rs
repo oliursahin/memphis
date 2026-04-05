@@ -73,17 +73,24 @@ pub async fn incremental_sync(
         }
     }
 
-    // Update checkpoint
-    {
-        let conn = db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        conn.execute(
-            "UPDATE sync_state SET checkpoint = ?1, last_incremental_sync = datetime('now') WHERE account_id = ?2",
-            rusqlite::params![response.history_id, account_id],
-        )?;
-    }
-
+    // NOTE: checkpoint is NOT advanced here — the caller must call
+    // `advance_checkpoint` after confirming delivery to avoid missed updates.
     Ok(SyncResult {
         changed_thread_ids: thread_ids.into_iter().collect(),
         new_history_id: response.history_id,
     })
+}
+
+/// Advance the sync checkpoint after changes have been delivered downstream.
+pub fn advance_checkpoint(
+    db: &Arc<Mutex<Connection>>,
+    account_id: &str,
+    history_id: &str,
+) -> Result<(), Error> {
+    let conn = db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+    conn.execute(
+        "UPDATE sync_state SET checkpoint = ?1, last_incremental_sync = datetime('now') WHERE account_id = ?2",
+        rusqlite::params![history_id, account_id],
+    )?;
+    Ok(())
 }
