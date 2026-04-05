@@ -13,13 +13,11 @@ import Onboarding from "./pages/Onboarding";
 import SplitSetup from "./pages/SplitSetup";
 import type { SplitConfig } from "./pages/SplitSetup";
 
-// Inbox-zero images — Vite resolves these to hashed URLs at build time
-const inboxZeroImages = Object.values(
-  import.meta.glob("./assets/inbox-zero/*.jpg", { eager: true, import: "default" })
-) as string[];
-
-// Pick one per app session (stable across re-renders, changes on reload)
-const randomImage = inboxZeroImages[Math.floor(Math.random() * inboxZeroImages.length)];
+interface InboxZeroPhoto {
+  url: string;
+  photographer: string;
+  photographerUrl: string;
+}
 
 interface OpenThread {
   id: string;
@@ -41,6 +39,7 @@ const MAILBOX_DEFS = [
 
 export default function App() {
   const [authed, setAuthed] = createSignal<boolean | null>(null); // null = loading
+  const [userInitials, setUserInitials] = createSignal("?");
   const [needsSetup, setNeedsSetup] = createSignal(false);
   const [splits, setSplits] = createSignal<SplitConfig[]>([]);
 
@@ -74,6 +73,17 @@ export default function App() {
   const [inlineReply, setInlineReply] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
 
+  // Inbox-zero background from Unsplash (fetched once per session)
+  const [inboxZeroPhoto, setInboxZeroPhoto] = createSignal<InboxZeroPhoto | null>(null);
+  const fetchInboxZeroPhoto = async () => {
+    try {
+      const photo = await invoke<InboxZeroPhoto>("get_inbox_zero_photo");
+      setInboxZeroPhoto(photo);
+    } catch (e) {
+      console.warn("Failed to fetch inbox-zero photo:", e);
+    }
+  };
+
   // Unified mailbox state
   const [mailboxes, setMailboxes] = createSignal<Record<string, { threads: ThreadRow[]; loading: boolean }>>(
     Object.fromEntries(MAILBOX_DEFS.map((m) => [m.id, { threads: [], loading: false }]))
@@ -88,6 +98,19 @@ export default function App() {
       const has = await invoke<boolean>("has_accounts");
       setAuthed(has);
       if (has) {
+        // Fetch user initials from the first active account
+        try {
+          const accounts = await invoke<{ displayName?: string; email: string }[]>("get_accounts");
+          if (accounts.length > 0) {
+            const { displayName, email } = accounts[0];
+            const name = displayName || email.split("@")[0];
+            const parts = name.trim().split(/\s+/);
+            const initials = parts.length >= 2
+              ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+              : name.slice(0, 2).toUpperCase();
+            setUserInitials(initials);
+          }
+        } catch { /* non-critical — keep default */ }
         const saved = await invoke<SplitConfig[]>("get_splits");
         const savedVersion = await invoke<number | null>("get_setting", { key: "splits_version" }).catch(() => null);
         const isStale = saved.length === 0 || savedVersion !== SPLITS_VERSION;
@@ -96,6 +119,7 @@ export default function App() {
           setActiveTab(saved[0].id);
           loadAllSplits();
           prefetchAllMailboxes();
+          fetchInboxZeroPhoto();
         } else {
           setNeedsSetup(true);
         }
@@ -224,6 +248,7 @@ export default function App() {
       setActiveTab(chosen[0].id);
       loadAllSplits();
       prefetchAllMailboxes();
+      fetchInboxZeroPhoto();
     }
   };
 
@@ -487,13 +512,22 @@ export default function App() {
     }>
     <div class="h-screen w-screen text-zinc-900 flex overflow-hidden relative">
       {/* ── Inbox-zero full-bleed background ── */}
-      <Show when={isInboxZero()}>
+      <Show when={isInboxZero() && inboxZeroPhoto()}>
         <img
-          src={randomImage}
+          src={inboxZeroPhoto()!.url}
           alt=""
           class="absolute inset-0 w-full h-full object-cover"
         />
         <div class="absolute inset-0 bg-black/10" />
+        {/* Unsplash attribution */}
+        <a
+          href={inboxZeroPhoto()!.photographerUrl + "?utm_source=march&utm_medium=referral"}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="absolute bottom-2 right-3 z-20 text-[10px] text-white/50 hover:text-white/80 transition-colors"
+        >
+          Photo by {inboxZeroPhoto()!.photographer} on Unsplash
+        </a>
       </Show>
 
       {/* ── Sidebar — transparent when inbox zero ── */}
@@ -510,7 +544,7 @@ export default function App() {
                 ? "border-white/30 text-white/70 hover:border-white/50 hover:text-white"
                 : "border-zinc-200 text-zinc-400 hover:border-zinc-300 hover:text-zinc-600"
             }`} title="Workspace">
-              OS
+              {userInitials()}
             </div>
             <div class="hidden group-hover/ws:flex flex-col items-center space-y-3 mt-3">
               <SidebarIcon icon="done" label="done" onClick={() => openMailbox("done")} light={isInboxZero()} />

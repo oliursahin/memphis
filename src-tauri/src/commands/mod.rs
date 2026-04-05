@@ -5,6 +5,7 @@ pub mod labels;
 pub mod search;
 pub mod settings;
 pub mod sync;
+pub mod unsplash;
 
 /// Smoke test command for Phase 1 verification.
 #[tauri::command]
