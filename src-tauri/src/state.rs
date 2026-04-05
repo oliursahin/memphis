@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
@@ -6,6 +7,7 @@ use rusqlite::Connection;
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub data_dir: PathBuf,
+    pub sync_stop: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -19,6 +21,7 @@ impl AppState {
         Ok(Self {
             db: Arc::new(Mutex::new(conn)),
             data_dir,
+            sync_stop: Arc::new(AtomicBool::new(false)),
         })
     }
 }
