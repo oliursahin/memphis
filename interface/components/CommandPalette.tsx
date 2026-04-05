@@ -246,7 +246,7 @@ export default function CommandBar(props: CommandBarProps) {
               setSelectedIndex(0);
             }}
             onKeyDown={handleKeyDown}
-            class="flex-1 bg-transparent text-[14px] text-black/80 outline-none placeholder:text-black/30"
+            class="flex-1 bg-transparent text-[14px] text-black/80 outline-none placeholder:text-black/40"
             placeholder="Type a command or search..."
             autofocus
           />

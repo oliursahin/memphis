@@ -45,24 +45,24 @@ export default function Inbox(props: InboxProps) {
                 >
                   {/* Sender */}
                   <div class="w-40 flex-shrink-0 truncate">
-                    <span class={`text-[13px] ${!thread.isRead ? "font-semibold text-zinc-900" : "text-zinc-500"}`}>
+                    <span class={`text-[14px] ${!thread.isRead ? "font-semibold text-zinc-900" : "text-zinc-500"}`}>
                       {thread.fromName}
                     </span>
                     <Show when={thread.messageCount > 1}>
-                      <span class="text-[11px] text-zinc-400 ml-1.5">{thread.messageCount}</span>
+                      <span class="text-[12px] text-zinc-400 ml-1.5">{thread.messageCount}</span>
                     </Show>
                   </div>
 
                   {/* Subject */}
                   <div class="flex-1 min-w-0 truncate">
-                    <span class={`text-[13px] ${!thread.isRead ? "font-medium text-zinc-800" : "text-zinc-400"}`}>
+                    <span class={`text-[14px] ${!thread.isRead ? "font-medium text-zinc-800" : "text-zinc-500"}`}>
                       {thread.subject}
                     </span>
                   </div>
 
                   {/* Date / hover actions — stacked in same space to prevent layout shift */}
                   <div class="relative w-[140px] flex-shrink-0 pl-3">
-                    <div class="flex justify-end text-[12px] text-zinc-400 tabular-nums group-hover:invisible">
+                    <div class="flex justify-end text-[13px] text-zinc-400 tabular-nums group-hover:invisible">
                       {thread.date}
                     </div>
                     <div class="absolute inset-0 flex items-center justify-end invisible group-hover:visible" onClick={(e) => e.stopPropagation()}>

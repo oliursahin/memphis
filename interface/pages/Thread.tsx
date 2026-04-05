@@ -296,7 +296,7 @@ export default function ThreadView(props: ThreadViewProps) {
                   type="text"
                   value={replyTo()}
                   onInput={(e) => setReplyTo(e.currentTarget.value)}
-                  class="flex-1 text-[13px] text-zinc-700 bg-transparent outline-none placeholder:text-zinc-300"
+                  class="flex-1 text-[13px] text-zinc-700 bg-transparent outline-none placeholder:text-zinc-400"
                   placeholder="recipient@email.com"
                 />
                 <button
@@ -323,7 +323,7 @@ export default function ThreadView(props: ThreadViewProps) {
                     type="text"
                     value={replyCc()}
                     onInput={(e) => setReplyCc(e.currentTarget.value)}
-                    class="flex-1 text-[13px] text-zinc-700 bg-transparent outline-none placeholder:text-zinc-300"
+                    class="flex-1 text-[13px] text-zinc-700 bg-transparent outline-none placeholder:text-zinc-400"
                     placeholder="cc@email.com"
                   />
                 </div>
@@ -334,7 +334,7 @@ export default function ThreadView(props: ThreadViewProps) {
                     type="text"
                     value={replyBcc()}
                     onInput={(e) => setReplyBcc(e.currentTarget.value)}
-                    class="flex-1 text-[13px] text-zinc-700 bg-transparent outline-none placeholder:text-zinc-300"
+                    class="flex-1 text-[13px] text-zinc-700 bg-transparent outline-none placeholder:text-zinc-400"
                     placeholder="bcc@email.com"
                   />
                 </div>
@@ -359,7 +359,7 @@ export default function ThreadView(props: ThreadViewProps) {
                 }}
                 placeholder="Write your reply..."
                 disabled={sending()}
-                class="absolute inset-0 w-full h-full text-[14px] text-zinc-800 leading-[1.7] bg-transparent resize-none outline-none placeholder:text-zinc-300 disabled:opacity-50"
+                class="absolute inset-0 w-full h-full text-[14px] text-zinc-800 leading-[1.7] bg-transparent resize-none outline-none placeholder:text-zinc-400 disabled:opacity-50"
               />
             </div>
 

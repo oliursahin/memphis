@@ -90,7 +90,7 @@ export default function SearchOverlay(props: SearchOverlayProps) {
             value={query()}
             onInput={(e) => onInput(e.currentTarget.value)}
             onKeyDown={handleKeyDown}
-            class="flex-1 bg-transparent text-[14px] text-black/80 outline-none placeholder:text-black/30"
+            class="flex-1 bg-transparent text-[14px] text-black/80 outline-none placeholder:text-black/40"
             placeholder="Search all emails..."
             autofocus
           />
