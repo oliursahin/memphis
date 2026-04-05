@@ -116,7 +116,7 @@ export default function App() {
       .filter((s) => s.id !== splitId && s.query && !s.query.startsWith("label:") && !s.query.startsWith("category:"))
       .map((s) => s.query!);
 
-    if (others.length === 0) return split.query;
+    if (others.length === 0) return `in:inbox ${split.query}`;
 
     // Negate each other split's terms
     const exclusions = others
@@ -129,7 +129,7 @@ export default function App() {
       })
       .join(" ");
 
-    return `${split.query} ${exclusions}`;
+    return `in:inbox ${split.query} ${exclusions}`;
   };
 
   // Prefetch all splits concurrently — each result updates cache as it arrives
