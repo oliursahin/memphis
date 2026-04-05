@@ -99,7 +99,7 @@ export default function App() {
     if (!split?.query) return undefined;
 
     // label: splits manage their own scope; category: splits get exclusions below
-    if (split.query.startsWith("label:")) return split.query;
+    if (split.query.startsWith("label:")) return `in:inbox ${split.query}`;
 
     // Other specific matchers (from:, filename:, OR groups, etc.) need in:inbox
     // so archived threads don't pollute listings and unread badges
