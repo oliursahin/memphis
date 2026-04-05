@@ -29,9 +29,7 @@ export default function Inbox(props: InboxProps) {
       <Show when={!props.loading} fallback={
         <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading…</div>
       }>
-      <Show when={props.threads.length > 0} fallback={
-        <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Inbox zero</div>
-      }>
+      <Show when={props.threads.length > 0}>
         <For each={props.threads}>
           {(thread) => (
                 <div
