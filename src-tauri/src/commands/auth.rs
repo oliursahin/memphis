@@ -62,6 +62,15 @@ pub async fn has_accounts(state: State<'_, AppState>) -> Result<bool, Error> {
 }
 
 #[tauri::command]
+pub async fn disconnect_account(state: State<'_, AppState>, account_id: String) -> Result<(), Error> {
+    let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+    conn.execute("DELETE FROM oauth_tokens WHERE account_id = ?1", [&account_id])?;
+    conn.execute("DELETE FROM accounts WHERE id = ?1", [&account_id])?;
+    log::info!("Account disconnected: {}", account_id);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn logout(state: State<'_, AppState>) -> Result<(), Error> {
     let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
     conn.execute("DELETE FROM oauth_tokens", [])?;

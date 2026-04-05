@@ -19,6 +19,15 @@ interface InboxZeroPhoto {
   photographerUrl: string;
 }
 
+interface AppAccount {
+  id: string;
+  email: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  provider: string;
+  isActive: boolean;
+}
+
 interface OpenThread {
   id: string;
   subject: string;
@@ -37,9 +46,18 @@ const MAILBOX_DEFS = [
   { id: "spam", label: "Spam", query: "in:spam", emptyText: "No spam" },
 ] as const;
 
+function getInitials(account: AppAccount): string {
+  const name = account.displayName || account.email.split("@")[0];
+  const parts = name.trim().split(/\s+/);
+  return parts.length >= 2
+    ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    : name.slice(0, 2).toUpperCase();
+}
+
 export default function App() {
   const [authed, setAuthed] = createSignal<boolean | null>(null); // null = loading
-  const [userInitials, setUserInitials] = createSignal("?");
+  const [accounts, setAccounts] = createSignal<AppAccount[]>([]);
+  const [activeAccountId, setActiveAccountId] = createSignal<string | null>(null);
   const [needsSetup, setNeedsSetup] = createSignal(false);
   const [splits, setSplits] = createSignal<SplitConfig[]>([]);
 
@@ -93,24 +111,36 @@ export default function App() {
   // Bump this whenever default split queries change to force re-setup
   const SPLITS_VERSION = 5;
 
+  const refreshAccounts = async () => {
+    try {
+      const fetched = await invoke<AppAccount[]>("get_accounts");
+      setAccounts(fetched);
+      if (fetched.length > 0) {
+        // Restore saved active account, or default to first
+        const savedId = await invoke<string | null>("get_setting", { key: "active_account_id" }).catch(() => null);
+        const validId = fetched.find((a) => a.id === savedId)?.id ?? fetched[0].id;
+        setActiveAccountId(validId);
+      }
+    } catch { /* non-critical */ }
+  };
+
+  const switchAccount = async (accountId: string) => {
+    setActiveAccountId(accountId);
+    await invoke("save_setting", { key: "active_account_id", value: accountId });
+    // Reload inbox for the new account
+    setSplitThreads({});
+    setOpenThread(null);
+    setActiveMailbox(null);
+    loadAllSplits();
+    prefetchAllMailboxes();
+  };
+
   const checkAuth = async () => {
     try {
       const has = await invoke<boolean>("has_accounts");
       setAuthed(has);
       if (has) {
-        // Fetch user initials from the first active account
-        try {
-          const accounts = await invoke<{ displayName?: string; email: string }[]>("get_accounts");
-          if (accounts.length > 0) {
-            const { displayName, email } = accounts[0];
-            const name = displayName || email.split("@")[0];
-            const parts = name.trim().split(/\s+/);
-            const initials = parts.length >= 2
-              ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-              : name.slice(0, 2).toUpperCase();
-            setUserInitials(initials);
-          }
-        } catch { /* non-critical — keep default */ }
+        await refreshAccounts();
         const saved = await invoke<SplitConfig[]>("get_splits");
         const savedVersion = await invoke<number | null>("get_setting", { key: "splits_version" }).catch(() => null);
         const isStale = saved.length === 0 || savedVersion !== SPLITS_VERSION;
@@ -234,8 +264,9 @@ export default function App() {
     setActiveMailbox(id);
   };
 
-  const onAuthComplete = () => {
+  const onAuthComplete = async () => {
     setAuthed(true);
+    await refreshAccounts();
     setNeedsSetup(true);
   };
 
@@ -357,6 +388,8 @@ export default function App() {
     try {
       await invoke("logout");
       setAuthed(false);
+      setAccounts([]);
+      setActiveAccountId(null);
       setSplitThreads({});
       setMailboxes(
         Object.fromEntries(MAILBOX_DEFS.map((m) => [m.id, { threads: [], loading: false }]))
@@ -543,22 +576,40 @@ export default function App() {
 
         {/* Border starts below traffic lights, runs to bottom */}
         <div class={`flex-1 w-full flex flex-col items-center ${isInboxZero() ? "" : "border-r border-zinc-200/60"}`}>
-          {/* Workspace icon — sub items show on hover */}
-          <div class="mt-1 group/ws">
-            <div class={`w-8 h-8 rounded-full border flex items-center justify-center text-[11px] font-medium cursor-pointer transition-colors mx-auto ${
-              isInboxZero()
-                ? "border-white/30 text-white/70 hover:border-white/50 hover:text-white"
-                : "border-zinc-200 text-zinc-400 hover:border-zinc-300 hover:text-zinc-600"
-            }`} title="Workspace">
-              {userInitials()}
-            </div>
-            <div class="hidden group-hover/ws:flex flex-col items-center space-y-3 mt-3">
-              <SidebarIcon icon="done" label="done" onClick={() => openMailbox("done")} light={isInboxZero()} />
-              <SidebarIcon icon="sent" label="sent" onClick={() => openMailbox("sent")} light={isInboxZero()} />
-              <SidebarIcon icon="drafts" label="drafts" onClick={() => openMailbox("drafts")} light={isInboxZero()} />
-              <SidebarIcon icon="bin" label="bin" onClick={() => openMailbox("bin")} light={isInboxZero()} />
-              <SidebarIcon icon="spam" label="spam" onClick={() => openMailbox("spam")} light={isInboxZero()} />
-            </div>
+          {/* Account switcher — stacked vertically */}
+          <div class="mt-1 flex flex-col items-center space-y-2">
+            <For each={accounts()}>
+              {(account) => {
+                const isActive = () => account.id === activeAccountId();
+                return (
+                  <div
+                    class={`w-8 h-8 rounded-full border flex items-center justify-center text-[11px] font-medium cursor-pointer transition-colors ${
+                      isActive()
+                        ? isInboxZero()
+                          ? "border-white text-white bg-white/20"
+                          : "border-zinc-800 text-zinc-800 bg-zinc-100"
+                        : isInboxZero()
+                          ? "border-white/30 text-white/50 hover:border-white/50 hover:text-white/70"
+                          : "border-zinc-200 text-zinc-400 hover:border-zinc-300 hover:text-zinc-500"
+                    }`}
+                    title={account.email}
+                    onClick={() => {
+                      if (!isActive()) switchAccount(account.id);
+                    }}
+                  >
+                    {getInitials(account)}
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+          {/* Mailbox shortcuts — show on hover over sidebar */}
+          <div class="mt-3 flex flex-col items-center space-y-3">
+            <SidebarIcon icon="done" label="done" onClick={() => openMailbox("done")} light={isInboxZero()} />
+            <SidebarIcon icon="sent" label="sent" onClick={() => openMailbox("sent")} light={isInboxZero()} />
+            <SidebarIcon icon="drafts" label="drafts" onClick={() => openMailbox("drafts")} light={isInboxZero()} />
+            <SidebarIcon icon="bin" label="bin" onClick={() => openMailbox("bin")} light={isInboxZero()} />
+            <SidebarIcon icon="spam" label="spam" onClick={() => openMailbox("spam")} light={isInboxZero()} />
           </div>
           <div class="flex-1" />
           {/* Shortcuts guide */}
@@ -665,7 +716,7 @@ export default function App() {
             }}
           </Show>
           }>
-            <Settings onBack={() => setShowSettings(false)} />
+            <Settings onBack={() => setShowSettings(false)} onAccountsChanged={refreshAccounts} />
           </Show>
         </div>
       </div>

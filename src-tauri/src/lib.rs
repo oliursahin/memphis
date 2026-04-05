@@ -75,6 +75,7 @@ pub fn run() {
             commands::auth::start_oauth_flow,
             commands::auth::get_accounts,
             commands::auth::has_accounts,
+            commands::auth::disconnect_account,
             commands::auth::logout,
             commands::inbox::list_inbox,
             commands::inbox::archive_thread,

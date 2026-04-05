@@ -10,16 +10,41 @@ use crate::state::AppState;
 
 // ── Shared helpers ──
 
-/// Get a GmailClient for the first active account (used by most commands).
+/// Resolve the active account ID: prefer the user-chosen `active_account_id` setting,
+/// fall back to the first active account by creation date.
+fn resolve_account_id(conn: &rusqlite::Connection) -> Result<String, Error> {
+    // Check if user has explicitly selected an account
+    if let Ok(json) = conn.query_row(
+        "SELECT value FROM settings WHERE key = 'active_account_id'",
+        [],
+        |row| row.get::<_, String>(0),
+    ) {
+        if let Ok(id) = serde_json::from_str::<String>(&json) {
+            // Verify the account still exists and is active
+            let exists: bool = conn.query_row(
+                "SELECT COUNT(*) > 0 FROM accounts WHERE id = ?1 AND is_active = 1",
+                [&id],
+                |row| row.get(0),
+            ).unwrap_or(false);
+            if exists {
+                return Ok(id);
+            }
+        }
+    }
+    // Fallback: first active account
+    conn.query_row(
+        "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .map_err(|_| Error::Auth("No active account. Please sign in.".into()))
+}
+
+/// Get a GmailClient for the active account.
 async fn get_gmail_client(state: &AppState) -> Result<GmailClient, Error> {
     let account_id = {
         let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        conn.query_row(
-            "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
-            [],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(|_| Error::Auth("No active account. Please sign in.".into()))?
+        resolve_account_id(&conn)?
     };
     let token = oauth::get_valid_token(&state.db, &account_id).await?;
     Ok(GmailClient::new(token))
@@ -29,14 +54,15 @@ async fn get_gmail_client(state: &AppState) -> Result<GmailClient, Error> {
 async fn get_gmail_client_with_sender(state: &AppState) -> Result<(GmailClient, String, String), Error> {
     let (account_id, email, name) = {
         let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        let row: (String, String, Option<String>) = conn
+        let aid = resolve_account_id(&conn)?;
+        let row: (String, Option<String>) = conn
             .query_row(
-                "SELECT id, email, display_name FROM accounts WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                "SELECT email, display_name FROM accounts WHERE id = ?1",
+                [&aid],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|_| Error::Auth("No active account.".into()))?;
-        row
+        (aid, row.0, row.1)
     };
     let token = oauth::get_valid_token(&state.db, &account_id).await?;
     let display = name.unwrap_or_else(|| email.clone());
