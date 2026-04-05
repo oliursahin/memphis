@@ -67,7 +67,6 @@ pub fn run() {
             commands::auth::has_accounts,
             commands::auth::logout,
             commands::inbox::list_inbox,
-            commands::inbox::get_unread_counts,
             commands::inbox::archive_thread,
             commands::inbox::get_thread_detail,
             commands::inbox::send_reply,
