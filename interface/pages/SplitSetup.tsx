@@ -25,12 +25,13 @@ const SUGGESTED_SPLITS: { id: string; name: string; query: string }[] = [
   { id: "important", name: "Important", query: "category:primary" },
   { id: "calendar", name: "Calendar", query: "{filename:ics from:calendar-notification@google.com}" },
   { id: "github", name: "GitHub", query: "from:notifications@github.com" },
+  { id: "others", name: "Others", query: "*" },
 ];
 
 export default function SplitSetup(props: SplitSetupProps) {
   const [labels, setLabels] = createSignal<GmailLabel[]>([]);
   const [loading, setLoading] = createSignal(true);
-    const [selected, setSelected] = createSignal<Set<string>>(new Set(["important", "calendar", "github"]));
+    const [selected, setSelected] = createSignal<Set<string>>(new Set(["important", "calendar", "github", "others"]));
   const [error, setError] = createSignal<string | null>(null);
 
   onMount(async () => {
