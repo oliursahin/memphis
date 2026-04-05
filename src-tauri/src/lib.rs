@@ -15,6 +15,9 @@ use sync::engine::SyncEngine;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Load .env for runtime secrets (Google OAuth, Unsplash, etc.)
+    dotenvy::dotenv().ok();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -48,7 +51,7 @@ pub fn run() {
 
             // Spawn background sync engine
             let sync_handle = app.handle().clone();
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 let engine = SyncEngine::new(sync_handle, sync_db, sync_stop);
                 engine.run_poll_loop(30).await;
             });

@@ -80,5 +80,8 @@ open = "5"
 # URL encoding
 urlencoding = "2"
 
+# .env file loading
+dotenvy = "0.15"
+
 # Async stream utilities (bounded concurrent fetching)
 futures = "0.3"

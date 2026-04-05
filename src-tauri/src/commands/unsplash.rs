@@ -43,8 +43,10 @@ pub struct InboxZeroPhoto {
 /// Also triggers the required download tracking endpoint per Unsplash guidelines.
 #[tauri::command]
 pub async fn get_inbox_zero_photo() -> Result<InboxZeroPhoto, Error> {
-    let access_key = std::env::var("UNSPLASH_ACCESS_KEY")
-        .map_err(|_| Error::Internal("UNSPLASH_ACCESS_KEY not set".into()))?;
+    let access_key = option_env!("UNSPLASH_ACCESS_KEY")
+        .map(String::from)
+        .or_else(|| std::env::var("UNSPLASH_ACCESS_KEY").ok())
+        .ok_or_else(|| Error::Internal("UNSPLASH_ACCESS_KEY not set".into()))?;
 
     let client = reqwest::Client::new();
 
@@ -67,7 +69,7 @@ pub async fn get_inbox_zero_photo() -> Result<InboxZeroPhoto, Error> {
     // Fire-and-forget: trigger download tracking (required by Unsplash guidelines)
     let dl_url = photo.links.download_location.clone();
     let dl_key = access_key.clone();
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         let _ = reqwest::Client::new()
             .get(&dl_url)
             .header("Authorization", format!("Client-ID {dl_key}"))
