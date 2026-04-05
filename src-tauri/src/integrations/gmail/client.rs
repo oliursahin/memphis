@@ -106,6 +106,17 @@ impl GmailClient {
         self.post_json(&url, &body).await
     }
 
+    /// Fetch a raw message (RFC 2822) in base64url encoding.
+    pub async fn get_message_raw(&self, message_id: &str) -> Result<String, Error> {
+        let url = format!("{GMAIL_API}/messages/{message_id}?format=raw");
+        #[derive(Deserialize)]
+        struct RawMessage {
+            raw: Option<String>,
+        }
+        let resp: RawMessage = self.get_json(&url).await?;
+        Ok(resp.raw.unwrap_or_default())
+    }
+
     /// Modify labels on a thread (archive = remove INBOX, etc.)
     pub async fn modify_thread(
         &self,

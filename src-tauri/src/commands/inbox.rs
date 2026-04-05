@@ -281,6 +281,101 @@ pub async fn mark_thread_read(
     Ok(())
 }
 
+/// Mark a thread as unread (add UNREAD label in Gmail).
+#[tauri::command]
+pub async fn mark_thread_unread(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<(), Error> {
+    let client = get_gmail_client(&state).await?;
+    client.modify_thread(&thread_id, &["UNREAD"], &[]).await?;
+    log::info!("Marked thread {thread_id} as unread");
+    Ok(())
+}
+
+/// Star or unstar a thread in Gmail.
+#[tauri::command]
+pub async fn star_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+    starred: bool,
+) -> Result<(), Error> {
+    let client = get_gmail_client(&state).await?;
+    if starred {
+        client.modify_thread(&thread_id, &["STARRED"], &[]).await?;
+    } else {
+        client.modify_thread(&thread_id, &[], &["STARRED"]).await?;
+    }
+    log::info!("Set starred={starred} on thread {thread_id}");
+    Ok(())
+}
+
+/// Report a thread as spam (add SPAM, remove INBOX).
+#[tauri::command]
+pub async fn spam_thread(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<(), Error> {
+    let client = get_gmail_client(&state).await?;
+    client.modify_thread(&thread_id, &["SPAM"], &["INBOX"]).await?;
+    log::info!("Reported thread {thread_id} as spam");
+    Ok(())
+}
+
+/// Add or remove labels on a thread.
+#[tauri::command]
+pub async fn modify_thread_labels(
+    state: State<'_, AppState>,
+    thread_id: String,
+    add_label_ids: Vec<String>,
+    remove_label_ids: Vec<String>,
+) -> Result<(), Error> {
+    let client = get_gmail_client(&state).await?;
+    let add: Vec<&str> = add_label_ids.iter().map(|s| s.as_str()).collect();
+    let remove: Vec<&str> = remove_label_ids.iter().map(|s| s.as_str()).collect();
+    client.modify_thread(&thread_id, &add, &remove).await?;
+    log::info!("Modified labels on thread {thread_id}: +{add_label_ids:?} -{remove_label_ids:?}");
+    Ok(())
+}
+
+/// Get the List-Unsubscribe URL from the last message in a thread.
+#[tauri::command]
+pub async fn get_unsubscribe_url(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<Option<String>, Error> {
+    let client = get_gmail_client(&state).await?;
+    let thread = client.get_thread_full(&thread_id).await?;
+    let messages = thread.messages.unwrap_or_default();
+    let last = match messages.last() {
+        Some(m) => m,
+        None => return Ok(None),
+    };
+    // Look for List-Unsubscribe header
+    let header = last.get_header("List-Unsubscribe").unwrap_or("");
+    // Extract HTTP URL from header (may contain mailto: and http:// variants)
+    let url = header
+        .split(',')
+        .map(|s| s.trim().trim_start_matches('<').trim_end_matches('>'))
+        .find(|s| s.starts_with("http://") || s.starts_with("https://"));
+    Ok(url.map(|s| s.to_string()))
+}
+
+/// Download a thread's last message as raw RFC 2822 (.eml format).
+#[tauri::command]
+pub async fn download_eml(
+    state: State<'_, AppState>,
+    thread_id: String,
+) -> Result<String, Error> {
+    let client = get_gmail_client(&state).await?;
+    let thread = client.get_thread(&thread_id).await?;
+    let messages = thread.messages.unwrap_or_default();
+    let last = messages.last().ok_or(Error::Internal("No messages in thread".into()))?;
+    let raw_b64 = client.get_message_raw(&last.id).await?;
+    let bytes = URL_SAFE_NO_PAD.decode(&raw_b64).or_else(|_| URL_SAFE.decode(&raw_b64)).or_else(|_| STANDARD.decode(&raw_b64)).map_err(|e| Error::Internal(format!("Base64 decode: {e}")))?;
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
 // ── Fast search (lightweight, 10 results max, high concurrency) ──
 
 #[tauri::command]
