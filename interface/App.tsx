@@ -12,6 +12,14 @@ import Onboarding from "./pages/Onboarding";
 import SplitSetup from "./pages/SplitSetup";
 import type { SplitConfig } from "./pages/SplitSetup";
 
+// Inbox-zero images — Vite resolves these to hashed URLs at build time
+const inboxZeroImages = Object.values(
+  import.meta.glob("./assets/inbox-zero/*.jpg", { eager: true, import: "default" })
+) as string[];
+
+// Pick one per app session (stable across re-renders, changes on reload)
+const randomImage = inboxZeroImages[Math.floor(Math.random() * inboxZeroImages.length)];
+
 interface OpenThread {
   id: string;
   subject: string;
@@ -43,7 +51,23 @@ export default function App() {
   const threads = () => splitThreads()[activeTab()] ?? [];
   const loadingInbox = () => loadingSplits().has(activeTab());
 
-  const [unreadCounts, setUnreadCounts] = createSignal<Record<string, number>>({});
+  // True when showing a split with no threads and nothing else open
+  const isInboxZero = () =>
+    threads().length === 0 && !loadingInbox() && !openThread() && !showCompose() && !showSettings() && !activeMailbox();
+
+  // Extra unread threads beyond the cached first page (computed from server counts)
+  const [extraUnread, setExtraUnread] = createSignal<Record<string, number>>({});
+
+  // Derive unread counts: cached count + extra beyond page 1
+  const unreadCounts = () => {
+    const all = splitThreads();
+    const extra = extraUnread();
+    const out: Record<string, number> = {};
+    for (const [id, list] of Object.entries(all)) {
+      out[id] = list.filter((t) => !t.isRead).length + (extra[id] ?? 0);
+    }
+    return out;
+  };
   const [activeTab, setActiveTab] = createSignal("important");
   const [openThread, setOpenThread] = createSignal<OpenThread | null>(null);
   const [showCompose, setShowCompose] = createSignal(false);
@@ -52,29 +76,12 @@ export default function App() {
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [inlineReply, setInlineReply] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
-  const [accountInitials, setAccountInitials] = createSignal("?");
 
   // Unified mailbox state
   const [mailboxes, setMailboxes] = createSignal<Record<string, { threads: ThreadRow[]; loading: boolean }>>(
     Object.fromEntries(MAILBOX_DEFS.map((m) => [m.id, { threads: [], loading: false }]))
   );
   const [activeMailbox, setActiveMailbox] = createSignal<string | null>(null);
-
-  const fetchUnreadCounts = async (splitList: SplitConfig[]) => {
-    // Build queries with exclusions so counts are mutually exclusive
-    const queries = splitList.map((split) => {
-      const q = buildQueryForSplit(split.id) ?? "";
-      return { id: split.id, query: q };
-    });
-    try {
-      const counts = await invoke<{ id: string; unreadCount: number }[]>("get_unread_counts", { splits: queries });
-      const map: Record<string, number> = {};
-      for (const c of counts) map[c.id] = c.unreadCount;
-      setUnreadCounts(map);
-    } catch (e) {
-      console.error("Failed to fetch unread counts:", e);
-    }
-  };
 
   // Bump this whenever default split queries change to force re-setup
   const SPLITS_VERSION = 5;
@@ -84,14 +91,6 @@ export default function App() {
       const has = await invoke<boolean>("has_accounts");
       setAuthed(has);
       if (has) {
-        // Fetch account info for workspace initials
-        const accounts = await invoke<{ email: string; displayName?: string }[]>("get_accounts").catch(() => []);
-        if (accounts.length > 0) {
-          const name = accounts[0].displayName || accounts[0].email;
-          const parts = name.includes("@") ? name.split("@")[0].split(".") : name.split(/\s+/);
-          setAccountInitials(parts.map((p) => p[0]?.toUpperCase()).filter(Boolean).slice(0, 2).join(""));
-        }
-
         const saved = await invoke<SplitConfig[]>("get_splits");
         const savedVersion = await invoke<number | null>("get_setting", { key: "splits_version" }).catch(() => null);
         const isStale = saved.length === 0 || savedVersion !== SPLITS_VERSION;
@@ -100,7 +99,6 @@ export default function App() {
           setActiveTab(saved[0].id);
           loadAllSplits();
           prefetchAllMailboxes();
-          fetchUnreadCounts(saved);
         } else {
           setNeedsSetup(true);
         }
@@ -116,16 +114,19 @@ export default function App() {
     const split = allSplits.find((s) => s.id === splitId);
     if (!split?.query) return undefined;
 
-    // Only broad category splits (category:*) get exclusions — specific matchers
-    // (from:, filename:, label:, etc.) use their raw queries
-    if (!split.query.startsWith("category:")) return split.query;
+    // label: splits manage their own scope; category: splits get exclusions below
+    if (split.query.startsWith("label:")) return `in:inbox ${split.query}`;
+
+    // Other specific matchers (from:, filename:, OR groups, etc.) need in:inbox
+    // so archived threads don't pollute listings and unread badges
+    if (!split.query.startsWith("category:")) return `in:inbox ${split.query}`;
 
     // Collect other non-label, non-category splits' queries to exclude
     const others = allSplits
       .filter((s) => s.id !== splitId && s.query && !s.query.startsWith("label:") && !s.query.startsWith("category:"))
       .map((s) => s.query!);
 
-    if (others.length === 0) return `in:inbox ${split.query}`;
+    if (others.length === 0) return split.query;
 
     // Negate each other split's terms
     const exclusions = others
@@ -138,7 +139,7 @@ export default function App() {
       })
       .join(" ");
 
-    return `in:inbox ${split.query} ${exclusions}`;
+    return `${split.query} ${exclusions}`;
   };
 
   // Prefetch all splits concurrently — each result updates cache as it arrives
@@ -169,6 +170,31 @@ export default function App() {
         }
       })
     );
+
+    // Fetch accurate unread counts now that the cache is populated
+    fetchUnreadCounts();
+  };
+
+  // Fetch accurate unread counts from server and compute the delta beyond the cache
+  const fetchUnreadCounts = async () => {
+    const allSplits = splits();
+    if (allSplits.length === 0) return;
+    const queries = allSplits
+      .map((s) => ({ id: s.id, query: buildQueryForSplit(s.id) ?? "" }))
+      .filter((q) => q.query !== "");
+    if (queries.length === 0) return;
+    try {
+      const counts = await invoke<{ id: string; count: number }[]>("get_unread_counts", { splits: queries });
+      const cache = splitThreads();
+      const extra: Record<string, number> = {};
+      for (const { id, count } of counts) {
+        const cachedUnread = (cache[id] ?? []).filter((t) => !t.isRead).length;
+        extra[id] = Math.max(0, count - cachedUnread);
+      }
+      setExtraUnread(extra);
+    } catch (e) {
+      console.error("Failed to fetch unread counts:", e);
+    }
   };
 
   // Switching tabs is instant — data already in cache
@@ -225,7 +251,6 @@ export default function App() {
       setActiveTab(chosen[0].id);
       loadAllSplits();
       prefetchAllMailboxes();
-      fetchUnreadCounts(chosen);
     }
   };
 
@@ -463,38 +488,52 @@ export default function App() {
     <Show when={!needsSetup()} fallback={
       <SplitSetup onComplete={onSetupComplete} />
     }>
-    <div class="h-screen w-screen bg-white text-zinc-900 flex overflow-hidden">
-      {/* ── Sidebar — dark, minimal ── */}
-      <aside class="w-14 flex-shrink-0 bg-white flex flex-col items-center select-none">
+    <div class="h-screen w-screen text-zinc-900 flex overflow-hidden relative">
+      {/* ── Inbox-zero full-bleed background ── */}
+      <Show when={isInboxZero()}>
+        <img
+          src={randomImage}
+          alt=""
+          class="absolute inset-0 w-full h-full object-cover"
+        />
+        <div class="absolute inset-0 bg-black/10" />
+      </Show>
+
+      {/* ── Sidebar — transparent when inbox zero ── */}
+      <aside class={`w-14 flex-shrink-0 flex flex-col items-center select-none relative z-10 transition-colors ${isInboxZero() ? "" : "bg-white"}`}>
         {/* Traffic light spacing — no border here */}
         <div class="h-12 flex-shrink-0" data-tauri-drag-region />
 
         {/* Border starts below traffic lights, runs to bottom */}
-        <div class="flex-1 w-full border-r border-zinc-200/60 flex flex-col items-center">
+        <div class={`flex-1 w-full flex flex-col items-center ${isInboxZero() ? "" : "border-r border-zinc-200/60"}`}>
           {/* Workspace icon — sub items show on hover */}
           <div class="mt-1 group/ws">
-            <div class="w-8 h-8 rounded-full border border-zinc-200 flex items-center justify-center text-[11px] font-medium text-zinc-400 cursor-pointer hover:border-zinc-300 hover:text-zinc-600 transition-colors mx-auto" title="Workspace">
-              {accountInitials()}
+            <div class={`w-8 h-8 rounded-full border flex items-center justify-center text-[11px] font-medium cursor-pointer transition-colors mx-auto ${
+              isInboxZero()
+                ? "border-white/30 text-white/70 hover:border-white/50 hover:text-white"
+                : "border-zinc-200 text-zinc-400 hover:border-zinc-300 hover:text-zinc-600"
+            }`} title="Workspace">
+              OS
             </div>
             <div class="hidden group-hover/ws:flex flex-col items-center space-y-3 mt-3">
-              <SidebarIcon icon="done" label="done" onClick={() => openMailbox("done")} />
-              <SidebarIcon icon="sent" label="sent" onClick={() => openMailbox("sent")} />
-              <SidebarIcon icon="drafts" label="drafts" onClick={() => openMailbox("drafts")} />
-              <SidebarIcon icon="bin" label="bin" onClick={() => openMailbox("bin")} />
-              <SidebarIcon icon="spam" label="spam" onClick={() => openMailbox("spam")} />
+              <SidebarIcon icon="done" label="done" onClick={() => openMailbox("done")} light={isInboxZero()} />
+              <SidebarIcon icon="sent" label="sent" onClick={() => openMailbox("sent")} light={isInboxZero()} />
+              <SidebarIcon icon="drafts" label="drafts" onClick={() => openMailbox("drafts")} light={isInboxZero()} />
+              <SidebarIcon icon="bin" label="bin" onClick={() => openMailbox("bin")} light={isInboxZero()} />
+              <SidebarIcon icon="spam" label="spam" onClick={() => openMailbox("spam")} light={isInboxZero()} />
             </div>
           </div>
           <div class="flex-1" />
           {/* Shortcuts guide */}
           <div class="pb-4 space-y-3">
-            <ShortcutHint hotkey="/" label="search" onClick={() => setShowSearch(true)} />
-            <ShortcutHint hotkey="⌘K" label="config" onClick={() => setShowCommandBar(true)} />
+            <ShortcutHint hotkey="/" label="search" onClick={() => setShowSearch(true)} light={isInboxZero()} />
+            <ShortcutHint hotkey="⌘K" label="config" onClick={() => setShowCommandBar(true)} light={isInboxZero()} />
           </div>
         </div>
       </aside>
 
       {/* ── Main content ── */}
-      <div class="flex-1 flex flex-col min-w-0">
+      <div class={`flex-1 flex flex-col min-w-0 relative z-10 ${isInboxZero() ? "" : "bg-white"}`}>
         {/* Nav: drag region + split inbox tabs (hidden when thread/compose open) */}
         <div class="flex-shrink-0" data-tauri-drag-region>
           <div class="h-10" data-tauri-drag-region />
@@ -511,14 +550,16 @@ export default function App() {
                       onClick={() => loadSplit(tab.id)}
                       class={`relative py-2.5 text-[13px] transition-colors ${i() === 0 ? "pr-3" : "px-3"} ${
                         activeTab() === tab.id
-                          ? "text-zinc-900 font-medium"
-                          : "text-zinc-400 hover:text-zinc-600"
+                          ? isInboxZero() ? "text-white font-medium" : "text-zinc-900 font-medium"
+                          : isInboxZero() ? "text-white/60 hover:text-white/80" : "text-zinc-400 hover:text-zinc-600"
                       }`}
                     >
                       {tab.label}
                       <Show when={count() > 0}>
                         <span class={`ml-1.5 text-[11px] tabular-nums ${
-                          activeTab() === tab.id ? "text-zinc-500" : "text-zinc-400"
+                          isInboxZero()
+                            ? activeTab() === tab.id ? "text-white/70" : "text-white/50"
+                            : activeTab() === tab.id ? "text-zinc-500" : "text-zinc-400"
                         }`}>
                           {count()}
                         </span>
@@ -664,7 +705,7 @@ function MailboxView(props: {
 
 /* ── Sidebar icon ── */
 
-function SidebarIcon(props: { icon: string; label: string; onClick?: () => void }) {
+function SidebarIcon(props: { icon: string; label: string; onClick?: () => void; light?: boolean }) {
   const icons: Record<string, () => any> = {
     done: () => (
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -702,26 +743,36 @@ function SidebarIcon(props: { icon: string; label: string; onClick?: () => void 
       onClick={props.onClick}
       class="flex flex-col items-center gap-0.5 group cursor-pointer"
     >
-      <div class="w-7 h-7 rounded-md flex items-center justify-center text-zinc-400 group-hover:text-zinc-600 transition-colors">
+      <div class={`w-7 h-7 rounded-md flex items-center justify-center transition-colors ${
+        props.light ? "text-white/70 group-hover:text-white" : "text-zinc-400 group-hover:text-zinc-600"
+      }`}>
         {Icon ? <Icon /> : null}
       </div>
-      <span class="text-[9px] text-zinc-400 group-hover:text-zinc-600 transition-colors">{props.label}</span>
+      <span class={`text-[9px] transition-colors ${
+        props.light ? "text-white/60 group-hover:text-white/80" : "text-zinc-400 group-hover:text-zinc-600"
+      }`}>{props.label}</span>
     </button>
   );
 }
 
 /* ── Shortcut hint ── */
 
-function ShortcutHint(props: { hotkey: string; label: string; onClick?: () => void }) {
+function ShortcutHint(props: { hotkey: string; label: string; onClick?: () => void; light?: boolean }) {
   return (
     <button
       onClick={props.onClick}
       class="flex flex-col items-center gap-0.5 group cursor-pointer"
     >
-      <kbd class="w-7 h-7 rounded-md bg-white border border-zinc-200 flex items-center justify-center text-[11px] text-zinc-400 font-mono shadow-sm group-hover:border-zinc-300 group-hover:text-zinc-600 transition-colors">
+      <kbd class={`w-7 h-7 rounded-md border flex items-center justify-center text-[11px] font-mono transition-colors ${
+        props.light
+          ? "bg-transparent border-white/25 text-white/70 group-hover:border-white/40 group-hover:text-white"
+          : "bg-white border-zinc-200 text-zinc-400 shadow-sm group-hover:border-zinc-300 group-hover:text-zinc-600"
+      }`}>
         {props.hotkey}
       </kbd>
-      <span class="text-[9px] text-zinc-400 group-hover:text-zinc-600 transition-colors">{props.label}</span>
+      <span class={`text-[9px] transition-colors ${
+        props.light ? "text-white/60 group-hover:text-white/80" : "text-zinc-400 group-hover:text-zinc-600"
+      }`}>{props.label}</span>
     </button>
   );
 }
