@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Memphis",
+  "productName": "memphis",
   "version": "0.1.0",
   "identifier": "cat.march.memphis",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Memphis",
+        "title": "memphis",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

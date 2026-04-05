@@ -114,7 +114,7 @@ export default function App() {
   const [activeMailbox, setActiveMailbox] = createSignal<string | null>(null);
 
   // Bump this whenever default split queries change to force re-setup
-  const SPLITS_VERSION = 5;
+  const SPLITS_VERSION = 6;
 
   const refreshAccounts = async () => {
     try {
@@ -170,32 +170,38 @@ export default function App() {
     const split = allSplits.find((s) => s.id === splitId);
     if (!split?.query) return undefined;
 
-    // label: splits manage their own scope; category: splits get exclusions below
+    // Helper: negate a split query for exclusion
+    const negate = (q: string): string => {
+      if (q.startsWith("{") && q.endsWith("}")) {
+        // OR group like {filename:ics from:x} — negate each term
+        return q.slice(1, -1).trim().split(/\s+/).map((t) => `-${t}`).join(" ");
+      }
+      return `-${q}`;
+    };
+
+    // Catch-all split (* = everything not matched by other splits)
+    if (split.query === "*") {
+      const exclusions = allSplits
+        .filter((s) => s.id !== splitId && s.query && s.query !== "*")
+        .map((s) => negate(s.query!))
+        .join(" ");
+      return `in:inbox ${exclusions}`.trim();
+    }
+
+    // label: splits manage their own scope
     if (split.query.startsWith("label:")) return `in:inbox ${split.query}`;
 
     // Other specific matchers (from:, filename:, OR groups, etc.) need in:inbox
     // so archived threads don't pollute listings and unread badges
     if (!split.query.startsWith("category:")) return `in:inbox ${split.query}`;
 
-    // Collect other non-label, non-category splits' queries to exclude
+    // category: splits — exclude non-label, non-category splits so they don't overlap
     const others = allSplits
-      .filter((s) => s.id !== splitId && s.query && !s.query.startsWith("label:") && !s.query.startsWith("category:"))
-      .map((s) => s.query!);
+      .filter((s) => s.id !== splitId && s.query && !s.query.startsWith("label:") && !s.query.startsWith("category:") && s.query !== "*")
+      .map((s) => negate(s.query!));
 
     if (others.length === 0) return split.query;
-
-    // Negate each other split's terms
-    const exclusions = others
-      .map((q) => {
-        if (q.startsWith("{") && q.endsWith("}")) {
-          // OR group like {filename:ics from:x} — negate each term
-          return q.slice(1, -1).trim().split(/\s+/).map((t) => `-${t}`).join(" ");
-        }
-        return `-${q}`;
-      })
-      .join(" ");
-
-    return `${split.query} ${exclusions}`;
+    return `${split.query} ${others.join(" ")}`;
   };
 
   // Prefetch all splits concurrently — each result updates cache as it arrives

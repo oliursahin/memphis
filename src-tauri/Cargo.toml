@@ -68,9 +68,6 @@ base64 = "0.22"
 # Async trait support
 async-trait = "0.1"
 
-# Env file loading
-dotenvy = "0.15"
-
 # Random for PKCE
 rand = "0.8"
 

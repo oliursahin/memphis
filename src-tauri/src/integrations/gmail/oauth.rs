@@ -19,13 +19,9 @@ pub struct OAuthConfig {
 
 impl OAuthConfig {
     pub fn from_env() -> Result<Self, Error> {
-        let client_id = std::env::var("GOOGLE_CLIENT_ID")
-            .map_err(|_| Error::Auth("GOOGLE_CLIENT_ID not set".into()))?;
-        let client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
-            .map_err(|_| Error::Auth("GOOGLE_CLIENT_SECRET not set".into()))?;
         Ok(Self {
-            client_id,
-            client_secret,
+            client_id: env!("GOOGLE_CLIENT_ID").to_string(),
+            client_secret: env!("GOOGLE_CLIENT_SECRET").to_string(),
         })
     }
 }
