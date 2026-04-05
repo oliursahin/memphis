@@ -18,6 +18,8 @@ export interface SplitConfig {
 
 interface SplitSetupProps {
   onComplete: (splits: SplitConfig[]) => void;
+  onCancel?: () => void;
+  currentSplits?: SplitConfig[];
 }
 
 // Smart splits — some use labels, some use queries
@@ -31,7 +33,10 @@ const SUGGESTED_SPLITS: { id: string; name: string; query: string }[] = [
 export default function SplitSetup(props: SplitSetupProps) {
   const [labels, setLabels] = createSignal<GmailLabel[]>([]);
   const [loading, setLoading] = createSignal(true);
-    const [selected, setSelected] = createSignal<Set<string>>(new Set(["important", "calendar", "github", "others"]));
+  const initialSelection = props.currentSplits && props.currentSplits.length > 0
+    ? new Set(props.currentSplits.map((s) => s.id))
+    : new Set(["important", "calendar", "github", "others"]);
+  const [selected, setSelected] = createSignal<Set<string>>(initialSelection);
   const [error, setError] = createSignal<string | null>(null);
 
   onMount(async () => {
@@ -149,12 +154,14 @@ export default function SplitSetup(props: SplitSetupProps) {
           Continue with {selected().size} split{selected().size !== 1 ? "s" : ""}
         </button>
 
-        <button
-          onClick={() => props.onComplete([])}
-          class="mt-2 w-full py-2 text-[13px] text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
-        >
-          Skip for now
-        </button>
+        <Show when={props.onCancel}>
+          <button
+            onClick={() => props.onCancel?.()}
+            class="mt-2 w-full py-2 text-[13px] text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
+          >
+            Cancel
+          </button>
+        </Show>
       </div>
     </div>
   );

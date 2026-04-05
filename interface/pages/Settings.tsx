@@ -13,6 +13,7 @@ interface Account {
 interface SettingsProps {
   onBack: () => void;
   onAccountsChanged?: () => void;
+  onNewAccount?: (accountId: string) => void;
 }
 
 type Section = "accounts" | "shortcuts";
@@ -61,7 +62,7 @@ export default function Settings(props: SettingsProps) {
         {/* Content */}
         <div class="flex-1 min-w-0 overflow-y-auto">
           <Show when={section() === "accounts"}>
-            <AccountsSection onAccountsChanged={props.onAccountsChanged} />
+            <AccountsSection onAccountsChanged={props.onAccountsChanged} onNewAccount={props.onNewAccount} />
           </Show>
           <Show when={section() === "shortcuts"}>
             <ShortcutsSection />
@@ -85,7 +86,7 @@ function SectionTitle(props: { title: string; description?: string }) {
   );
 }
 
-function AccountsSection(props: { onAccountsChanged?: () => void }) {
+function AccountsSection(props: { onAccountsChanged?: () => void; onNewAccount?: (accountId: string) => void }) {
   const [accounts, setAccounts] = createSignal<Account[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [adding, setAdding] = createSignal(false);
@@ -117,6 +118,11 @@ function AccountsSection(props: { onAccountsChanged?: () => void }) {
       await invoke("start_oauth_flow");
       await fetchAccounts();
       props.onAccountsChanged?.();
+      // Trigger split setup for the newly added account
+      const accts = accounts();
+      if (accts.length > 0) {
+        props.onNewAccount?.(accts[accts.length - 1].id);
+      }
     } catch (e) {
       console.error("Failed to add account:", e);
     } finally {
