@@ -45,7 +45,6 @@ export default function App() {
 
   // Per-split thread cache — switching tabs is instant
   const [splitThreads, setSplitThreads] = createSignal<Record<string, ThreadRow[]>>({});
-  const [splitHasMore, setSplitHasMore] = createSignal<Record<string, boolean>>({});
   const [loadingSplits, setLoadingSplits] = createSignal<Set<string>>(new Set());
 
   // Derived from cache
@@ -156,7 +155,6 @@ export default function App() {
             query: query ?? null,
           });
           setSplitThreads((prev) => ({ ...prev, [split.id]: res.threads }));
-          setSplitHasMore((prev) => ({ ...prev, [split.id]: !!res.nextPageToken }));
         } catch (e) {
           console.error(`Failed to load ${split.id}:`, e);
         } finally {
@@ -519,8 +517,6 @@ export default function App() {
               }>
                 {(tab, i) => {
                   const count = () => unreadCounts()[tab.id] ?? 0;
-                  const hasMore = () => splitHasMore()[tab.id] ?? false;
-                  const badge = () => hasMore() ? `${count()}+` : `${count()}`;
                   return (
                     <button
                       onClick={() => loadSplit(tab.id)}
@@ -537,7 +533,7 @@ export default function App() {
                             ? activeTab() === tab.id ? "text-white/70" : "text-white/50"
                             : activeTab() === tab.id ? "text-zinc-500" : "text-zinc-400"
                         }`}>
-                          {badge()}
+                          {count()}
                         </span>
                       </Show>
                     </button>
