@@ -52,6 +52,7 @@ export default function App() {
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [inlineReply, setInlineReply] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
+  const [accountInitials, setAccountInitials] = createSignal("?");
 
   // Unified mailbox state
   const [mailboxes, setMailboxes] = createSignal<Record<string, { threads: ThreadRow[]; loading: boolean }>>(
@@ -83,6 +84,14 @@ export default function App() {
       const has = await invoke<boolean>("has_accounts");
       setAuthed(has);
       if (has) {
+        // Fetch account info for workspace initials
+        const accounts = await invoke<{ email: string; displayName?: string }[]>("get_accounts").catch(() => []);
+        if (accounts.length > 0) {
+          const name = accounts[0].displayName || accounts[0].email;
+          const parts = name.includes("@") ? name.split("@")[0].split(".") : name.split(/\s+/);
+          setAccountInitials(parts.map((p) => p[0]?.toUpperCase()).filter(Boolean).slice(0, 2).join(""));
+        }
+
         const saved = await invoke<SplitConfig[]>("get_splits");
         const savedVersion = await invoke<number | null>("get_setting", { key: "splits_version" }).catch(() => null);
         const isStale = saved.length === 0 || savedVersion !== SPLITS_VERSION;
@@ -465,7 +474,7 @@ export default function App() {
           {/* Workspace icon — sub items show on hover */}
           <div class="mt-1 group/ws">
             <div class="w-8 h-8 rounded-full border border-zinc-200 flex items-center justify-center text-[11px] font-medium text-zinc-400 cursor-pointer hover:border-zinc-300 hover:text-zinc-600 transition-colors mx-auto" title="Workspace">
-              OS
+              {accountInitials()}
             </div>
             <div class="hidden group-hover/ws:flex flex-col items-center space-y-3 mt-3">
               <SidebarIcon icon="done" label="done" onClick={() => openMailbox("done")} />
