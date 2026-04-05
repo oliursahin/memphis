@@ -57,6 +57,15 @@ function getInitials(account: AppAccount): string {
     : name.slice(0, 2).toUpperCase();
 }
 
+const ACCOUNT_RING_COLORS = ["border-[#CD68E6]", "border-[#32A5E3]"];
+const ACCOUNT_RING_COLORS_LIGHT = ["border-[#CD68E6]/50", "border-[#32A5E3]/50"];
+
+function getAccountRing(accounts: AppAccount[], accountId: string, light: boolean): string {
+  const idx = accounts.findIndex((a) => a.id === accountId);
+  const palette = light ? ACCOUNT_RING_COLORS_LIGHT : ACCOUNT_RING_COLORS;
+  return palette[idx % palette.length];
+}
+
 export default function App() {
   const [authed, setAuthed] = createSignal<boolean | null>(null); // null = loading
   const [accounts, setAccounts] = createSignal<AppAccount[]>([]);
@@ -95,13 +104,26 @@ export default function App() {
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [inlineReply, setInlineReply] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
+  const [showAccountSwitcher, setShowAccountSwitcher] = createSignal(false);
 
-  // Inbox-zero background from Unsplash (fetched once per session)
+  // Inbox-zero background from Unsplash (cached once per day in localStorage)
   const [inboxZeroPhoto, setInboxZeroPhoto] = createSignal<InboxZeroPhoto | null>(null);
   const fetchInboxZeroPhoto = async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const cached = localStorage.getItem("inbox_zero_photo");
+    if (cached) {
+      try {
+        const { date, photo } = JSON.parse(cached);
+        if (date === today) {
+          setInboxZeroPhoto(photo);
+          return;
+        }
+      } catch { /* stale cache, refetch */ }
+    }
     try {
       const photo = await invoke<InboxZeroPhoto>("get_inbox_zero_photo");
       setInboxZeroPhoto(photo);
+      localStorage.setItem("inbox_zero_photo", JSON.stringify({ date: today, photo }));
     } catch (e) {
       console.warn("Failed to fetch inbox-zero photo:", e);
     }
@@ -554,6 +576,23 @@ export default function App() {
       return;
     }
 
+    // Ctrl+1/2/3… to switch accounts
+    if (e.ctrlKey && e.key >= "1" && e.key <= "9") {
+      const idx = parseInt(e.key) - 1;
+      const accs = accounts();
+      if (idx < accs.length) {
+        e.preventDefault();
+        const target = idx === 0
+          ? accs.find((a) => a.id === activeAccountId()) ?? accs[0]
+          : accs.filter((a) => a.id !== activeAccountId())[idx - 1];
+        if (target && target.id !== activeAccountId()) {
+          switchAccount(target.id);
+          setShowAccountSwitcher(false);
+        }
+      }
+      return;
+    }
+
     if (e.key === "Tab") {
       e.preventDefault();
       const s = splits();
@@ -590,6 +629,24 @@ export default function App() {
         e.preventDefault();
         const id = openThread()?.id ?? selectedId();
         if (id) archiveThread(id);
+        else openMailbox("done");
+        break;
+      }
+      case "s":
+        e.preventDefault();
+        if (!openThread()) openMailbox("sent");
+        break;
+      case "d":
+        e.preventDefault();
+        if (!openThread()) openMailbox("drafts");
+        break;
+      case "b":
+        e.preventDefault();
+        if (!openThread()) openMailbox("bin");
+        break;
+      case "!": {
+        e.preventDefault();
+        if (!openThread()) openMailbox("spam");
         break;
       }
       case "#": {
@@ -669,41 +726,66 @@ export default function App() {
       </Show>
 
       {/* ── Sidebar — transparent when inbox zero ── */}
-      <aside class={`w-14 flex-shrink-0 flex flex-col items-center select-none relative z-10 transition-colors ${isInboxZero() ? "" : "bg-white"}`}>
+      <aside class={`group/sidebar w-14 flex-shrink-0 flex flex-col items-center select-none relative z-10 transition-colors ${isInboxZero() ? "" : "bg-white"}`}>
         {/* Traffic light spacing — no border here */}
         <div class="h-12 flex-shrink-0" data-tauri-drag-region />
 
         {/* Border starts below traffic lights, runs to bottom */}
         <div class={`flex-1 w-full flex flex-col items-center ${isInboxZero() ? "" : "border-r border-zinc-200/60"}`}>
-          {/* Account switcher — stacked vertically */}
-          <div class="mt-1 flex flex-col items-center space-y-2">
-            <For each={accounts()}>
-              {(account) => {
-                const isActive = () => account.id === activeAccountId();
-                return (
-                  <div
-                    class={`w-8 h-8 rounded-full border flex items-center justify-center text-[11px] font-medium cursor-pointer transition-colors ${
-                      isActive()
-                        ? isInboxZero()
-                          ? "border-white text-white bg-white/20"
-                          : "border-zinc-800 text-zinc-800 bg-zinc-100"
-                        : isInboxZero()
-                          ? "border-white/30 text-white/50 hover:border-white/50 hover:text-white/70"
-                          : "border-zinc-200 text-zinc-400 hover:border-zinc-300 hover:text-zinc-500"
-                    }`}
-                    title={account.email}
-                    onClick={() => {
-                      if (!isActive()) switchAccount(account.id);
-                    }}
-                  >
-                    {getInitials(account)}
-                  </div>
-                );
-              }}
-            </For>
+          {/* Account avatar — click to reveal other accounts below */}
+          <div class="mt-1 flex flex-col items-center space-y-1.5">
+            {(() => {
+              const active = () => accounts().find((a) => a.id === activeAccountId());
+              return (
+                <div
+                  class={`w-8 h-8 rounded-full border flex items-center justify-center text-[11px] font-medium cursor-pointer transition-colors ${
+                    active() ? getAccountRing(accounts(), active()!.id, isInboxZero()) : "border-zinc-200"
+                  } ${isInboxZero() ? "text-white/70" : "text-zinc-500"}`}
+                  title={active()?.email}
+                  onClick={() => {
+                    if (accounts().length > 1) setShowAccountSwitcher(!showAccountSwitcher());
+                  }}
+                >
+                  {active() ? getInitials(active()!) : "?"}
+                </div>
+              );
+            })()}
+            {/* Other accounts — slide down below active avatar */}
+            <Show when={showAccountSwitcher()}>
+              <div
+                class="fixed inset-0 z-40"
+                onClick={() => setShowAccountSwitcher(false)}
+              />
+              <div class="relative z-50 flex flex-col items-center space-y-1.5">
+                <For each={accounts().filter((a) => a.id !== activeAccountId())}>
+                  {(account, i) => (
+                    <div
+                      class={`w-8 h-8 rounded-full border flex items-center justify-center text-[11px] font-medium cursor-pointer transition-colors relative group ${
+                        getAccountRing(accounts(), account.id, isInboxZero())
+                      } ${isInboxZero() ? "text-white/70" : "text-zinc-500"}`}
+                      title={account.email}
+                      onClick={() => {
+                        switchAccount(account.id);
+                        setShowAccountSwitcher(false);
+                      }}
+                    >
+                      {getInitials(account)}
+                      {/* Shortcut hint on hover */}
+                      <span class={`absolute left-10 whitespace-nowrap text-[10px] font-mono opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none ${
+                        isInboxZero() ? "text-white/60" : "text-zinc-400"
+                      }`}>
+                        ⌃{i() + 2}
+                      </span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
           </div>
-          {/* Mailbox shortcuts — show on hover over sidebar */}
-          <div class="mt-3 flex flex-col items-center space-y-3">
+          {/* Mailbox shortcuts — visible on sidebar hover */}
+          <div class="mt-3 flex flex-col items-center space-y-3 opacity-0 group-hover/sidebar:opacity-100 transition-opacity"
+            style="transition-duration: 150ms"
+          >
             <SidebarIcon icon="done" label="done" onClick={() => openMailbox("done")} light={isInboxZero()} />
             <SidebarIcon icon="sent" label="sent" onClick={() => openMailbox("sent")} light={isInboxZero()} />
             <SidebarIcon icon="drafts" label="drafts" onClick={() => openMailbox("drafts")} light={isInboxZero()} />
@@ -711,7 +793,7 @@ export default function App() {
             <SidebarIcon icon="spam" label="spam" onClick={() => openMailbox("spam")} light={isInboxZero()} />
           </div>
           <div class="flex-1" />
-          {/* Shortcuts guide */}
+          {/* Search & config — always visible */}
           <div class="pb-4 space-y-3">
             <ShortcutHint hotkey="/" label="search" onClick={() => setShowSearch(true)} light={isInboxZero()} />
             <ShortcutHint hotkey="⌘K" label="config" onClick={() => setShowCommandBar(true)} light={isInboxZero()} />
