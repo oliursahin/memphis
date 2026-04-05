@@ -79,6 +79,7 @@ pub fn run() {
             commands::settings::get_splits,
             commands::settings::save_setting,
             commands::settings::get_setting,
+            commands::unsplash::get_inbox_zero_photo,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
