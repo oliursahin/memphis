@@ -40,6 +40,7 @@ const MAILBOX_DEFS = [
 
 export default function App() {
   const [authed, setAuthed] = createSignal<boolean | null>(null); // null = loading
+  const [userInitials, setUserInitials] = createSignal("?");
   const [needsSetup, setNeedsSetup] = createSignal(false);
   const [splits, setSplits] = createSignal<SplitConfig[]>([]);
 
@@ -87,6 +88,19 @@ export default function App() {
       const has = await invoke<boolean>("has_accounts");
       setAuthed(has);
       if (has) {
+        // Fetch user initials from the first active account
+        try {
+          const accounts = await invoke<{ displayName?: string; email: string }[]>("get_accounts");
+          if (accounts.length > 0) {
+            const { displayName, email } = accounts[0];
+            const name = displayName || email.split("@")[0];
+            const parts = name.trim().split(/\s+/);
+            const initials = parts.length >= 2
+              ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+              : name.slice(0, 2).toUpperCase();
+            setUserInitials(initials);
+          }
+        } catch { /* non-critical — keep default */ }
         const saved = await invoke<SplitConfig[]>("get_splits");
         const savedVersion = await invoke<number | null>("get_setting", { key: "splits_version" }).catch(() => null);
         const isStale = saved.length === 0 || savedVersion !== SPLITS_VERSION;
@@ -485,7 +499,7 @@ export default function App() {
                 ? "border-white/30 text-white/70 hover:border-white/50 hover:text-white"
                 : "border-zinc-200 text-zinc-400 hover:border-zinc-300 hover:text-zinc-600"
             }`} title="Workspace">
-              OS
+              {userInitials()}
             </div>
             <div class="hidden group-hover/ws:flex flex-col items-center space-y-3 mt-3">
               <SidebarIcon icon="done" label="done" onClick={() => openMailbox("done")} light={isInboxZero()} />
