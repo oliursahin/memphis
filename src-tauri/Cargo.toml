@@ -81,7 +81,7 @@ open = "5"
 # URL encoding
 urlencoding = "2"
 
-# Load .env at runtime
+# .env file loading
 dotenvy = "0.15"
 
 # Async stream utilities (bounded concurrent fetching)

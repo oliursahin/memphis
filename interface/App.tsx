@@ -101,12 +101,24 @@ export default function App() {
   const [showSettings, setShowSettings] = createSignal(false);
   const [showAccountPicker, setShowAccountPicker] = createSignal(false);
 
-  // Inbox-zero background from Unsplash (fetched once per session)
+  // Inbox-zero background from Unsplash (cached once per day in localStorage)
   const [inboxZeroPhoto, setInboxZeroPhoto] = createSignal<InboxZeroPhoto | null>(null);
   const fetchInboxZeroPhoto = async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const cached = localStorage.getItem("inbox_zero_photo");
+    if (cached) {
+      try {
+        const { date, photo } = JSON.parse(cached);
+        if (date === today) {
+          setInboxZeroPhoto(photo);
+          return;
+        }
+      } catch { /* stale cache, refetch */ }
+    }
     try {
       const photo = await invoke<InboxZeroPhoto>("get_inbox_zero_photo");
       setInboxZeroPhoto(photo);
+      localStorage.setItem("inbox_zero_photo", JSON.stringify({ date: today, photo }));
     } catch (e) {
       console.warn("Failed to fetch inbox-zero photo:", e);
     }
@@ -580,6 +592,23 @@ export default function App() {
       return;
     }
 
+    // Ctrl+1/2/3… to switch accounts
+    if (e.ctrlKey && e.key >= "1" && e.key <= "9") {
+      const idx = parseInt(e.key) - 1;
+      const accs = accounts();
+      if (idx < accs.length) {
+        e.preventDefault();
+        const target = idx === 0
+          ? accs.find((a) => a.id === activeAccountId()) ?? accs[0]
+          : accs.filter((a) => a.id !== activeAccountId())[idx - 1];
+        if (target && target.id !== activeAccountId()) {
+          switchAccount(target.id);
+          setShowAccountPicker(false);
+        }
+      }
+      return;
+    }
+
     if (e.key === "Tab") {
       e.preventDefault();
       const s = splits();
@@ -616,6 +645,24 @@ export default function App() {
         e.preventDefault();
         const id = openThread()?.id ?? selectedId();
         if (id) archiveThread(id);
+        else openMailbox("done");
+        break;
+      }
+      case "s":
+        e.preventDefault();
+        if (!openThread()) openMailbox("sent");
+        break;
+      case "d":
+        e.preventDefault();
+        if (!openThread()) openMailbox("drafts");
+        break;
+      case "b":
+        e.preventDefault();
+        if (!openThread()) openMailbox("bin");
+        break;
+      case "!": {
+        e.preventDefault();
+        if (!openThread()) openMailbox("spam");
         break;
       }
       case "#": {
@@ -706,7 +753,7 @@ export default function App() {
       </Show>
 
       {/* ── Sidebar — transparent when inbox zero ── */}
-      <aside class={`w-14 flex-shrink-0 flex flex-col items-center select-none relative z-10 transition-colors ${isInboxZero() ? "" : "bg-white"}`}>
+      <aside class={`group/sidebar w-14 flex-shrink-0 flex flex-col items-center select-none relative z-10 transition-colors ${isInboxZero() ? "" : "bg-white"}`}>
         {/* Traffic light spacing — no border here */}
         <div class="h-12 flex-shrink-0" data-tauri-drag-region />
 
@@ -736,8 +783,10 @@ export default function App() {
               </Show>
             </div>
           </div>
-          {/* Mailbox shortcuts — show on hover over sidebar */}
-          <div class="mt-3 flex flex-col items-center space-y-3">
+          {/* Mailbox shortcuts — visible on sidebar hover */}
+          <div class="mt-3 flex flex-col items-center space-y-3 opacity-0 group-hover/sidebar:opacity-100 transition-opacity"
+            style="transition-duration: 150ms"
+          >
             <SidebarIcon icon="done" label="done" onClick={() => openMailbox("done")} light={isInboxZero()} />
             <SidebarIcon icon="sent" label="sent" onClick={() => openMailbox("sent")} light={isInboxZero()} />
             <SidebarIcon icon="drafts" label="drafts" onClick={() => openMailbox("drafts")} light={isInboxZero()} />
@@ -745,7 +794,7 @@ export default function App() {
             <SidebarIcon icon="spam" label="spam" onClick={() => openMailbox("spam")} light={isInboxZero()} />
           </div>
           <div class="flex-1" />
-          {/* Shortcuts guide */}
+          {/* Search & config — always visible */}
           <div class="pb-4 space-y-3">
             <ShortcutHint hotkey="/" label="search" onClick={() => setShowSearch(true)} light={isInboxZero()} />
             <ShortcutHint hotkey="⌘K" label="config" onClick={() => setShowCommandBar(true)} light={isInboxZero()} />

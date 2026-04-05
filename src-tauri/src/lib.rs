@@ -15,8 +15,8 @@ use sync::engine::SyncEngine;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Load .env so runtime env vars (e.g. UNSPLASH_ACCESS_KEY) are available
-    let _ = dotenvy::dotenv();
+    // Load .env for runtime secrets (Google OAuth, Unsplash, etc.)
+    dotenvy::dotenv().ok();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

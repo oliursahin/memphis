@@ -1,12 +1,37 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::Rng;
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
+use tokio::sync::Mutex as TokioMutex;
 use uuid::Uuid;
 
 use crate::error::Error;
+
+struct TokenCache {
+    /// Cached valid tokens: account_id → (access_token, fetched_at)
+    tokens: HashMap<String, (String, Instant)>,
+    /// Last failed refresh attempt: account_id → (error_message, attempted_at)
+    failures: HashMap<String, (String, Instant)>,
+}
+
+/// Serializes token refresh operations and caches results so concurrent callers
+/// don't stampede the OAuth endpoint.
+static TOKEN_CACHE: std::sync::LazyLock<TokioMutex<TokenCache>> =
+    std::sync::LazyLock::new(|| {
+        TokioMutex::new(TokenCache {
+            tokens: HashMap::new(),
+            failures: HashMap::new(),
+        })
+    });
+
+/// How long to cache a successful token in memory (50 min — well under the 60-min expiry).
+const TOKEN_TTL_SECS: u64 = 50 * 60;
+/// How long to suppress retries after a failed refresh.
+const FAILURE_COOLDOWN_SECS: u64 = 30;
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
@@ -20,8 +45,14 @@ pub struct OAuthConfig {
 impl OAuthConfig {
     pub fn from_env() -> Result<Self, Error> {
         Ok(Self {
-            client_id: env!("GOOGLE_CLIENT_ID").to_string(),
-            client_secret: env!("GOOGLE_CLIENT_SECRET").to_string(),
+            client_id: std::env::var("GOOGLE_CLIENT_ID")
+                .ok()
+                .or_else(|| option_env!("GOOGLE_CLIENT_ID").map(String::from))
+                .ok_or_else(|| Error::Internal("GOOGLE_CLIENT_ID not set".into()))?,
+            client_secret: std::env::var("GOOGLE_CLIENT_SECRET")
+                .ok()
+                .or_else(|| option_env!("GOOGLE_CLIENT_SECRET").map(String::from))
+                .ok_or_else(|| Error::Internal("GOOGLE_CLIENT_SECRET not set".into()))?,
         })
     }
 }
@@ -222,63 +253,102 @@ pub fn save_account(
 }
 
 /// Get a valid access token for the given account, refreshing if needed.
+/// Uses an in-memory cache + lock to ensure only one refresh happens at a time.
+/// On success the token is cached; on failure the error is cached for a cooldown period.
 pub async fn get_valid_token(
     db: &Arc<Mutex<Connection>>,
     account_id: &str,
 ) -> Result<String, Error> {
-    let (access_token, refresh_token, expires_at) = {
+    let mut cache = TOKEN_CACHE.lock().await;
+
+    // Check in-memory cache first
+    if let Some((token, fetched_at)) = cache.tokens.get(account_id) {
+        if fetched_at.elapsed().as_secs() < TOKEN_TTL_SECS {
+            return Ok(token.clone());
+        }
+        // Expired — remove and fall through to refresh
+        cache.tokens.remove(account_id);
+    }
+
+    // If we recently failed, don't hammer Google — return the cached error
+    if let Some((err_msg, attempted_at)) = cache.failures.get(account_id) {
+        if attempted_at.elapsed().as_secs() < FAILURE_COOLDOWN_SECS {
+            return Err(Error::Auth(err_msg.clone()));
+        }
+        // Cooldown expired — remove and retry
+        cache.failures.remove(account_id);
+    }
+
+    // Check DB for a still-valid access token (covers cold start / cache miss)
+    let (db_access_token, db_expires_at, refresh_token) = {
         let conn = db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
         let mut stmt = conn.prepare(
-            "SELECT access_token, refresh_token, expires_at FROM oauth_tokens WHERE account_id = ?1"
+            "SELECT access_token, expires_at, refresh_token FROM oauth_tokens WHERE account_id = ?1",
         )?;
         stmt.query_row(rusqlite::params![account_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(2)?,
             ))
-        }).map_err(|_| Error::Auth("No tokens found for account".into()))?
+        })
+        .map_err(|_| Error::Auth("No tokens found for account".into()))?
     };
 
-    // Check if token needs refresh (within 5 minutes of expiry)
-    let needs_refresh = match &expires_at {
-        Some(exp) => {
-            chrono::DateTime::parse_from_rfc3339(exp)
-                .map(|exp| exp < chrono::Utc::now() + chrono::Duration::minutes(5))
-                .unwrap_or(true)
+    // If the DB token is still valid, seed the cache and return it
+    if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(&db_expires_at) {
+        let now = chrono::Utc::now();
+        if expires_at > now + chrono::Duration::seconds(30) {
+            cache.tokens.insert(
+                account_id.to_string(),
+                (db_access_token.clone(), Instant::now()),
+            );
+            return Ok(db_access_token);
         }
-        None => true,
-    };
-
-    if !needs_refresh {
-        return Ok(access_token);
     }
 
     log::info!("Refreshing access token for account {account_id}");
     let config = OAuthConfig::from_env()?;
-    let new_tokens = refresh_access_token(&config, &refresh_token).await?;
 
-    let new_expires_at = chrono::Utc::now()
-        + chrono::Duration::seconds(new_tokens.expires_in.unwrap_or(3600) as i64);
-    let expires_str = new_expires_at.to_rfc3339();
+    match refresh_access_token(&config, &refresh_token).await {
+        Ok(new_tokens) => {
+            let new_expires_at = chrono::Utc::now()
+                + chrono::Duration::seconds(new_tokens.expires_in.unwrap_or(3600) as i64);
+            let expires_str = new_expires_at.to_rfc3339();
 
-    // Update tokens in DB
-    {
-        let conn = db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-        conn.execute(
-            "UPDATE oauth_tokens SET access_token = ?1, expires_at = ?2 WHERE account_id = ?3",
-            rusqlite::params![new_tokens.access_token, expires_str, account_id],
-        )?;
-        // If a new refresh token was issued, update it too
-        if let Some(ref rt) = new_tokens.refresh_token {
-            conn.execute(
-                "UPDATE oauth_tokens SET refresh_token = ?1 WHERE account_id = ?2",
-                rusqlite::params![rt, account_id],
-            )?;
+            // Update tokens in DB
+            {
+                let conn = db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+                conn.execute(
+                    "UPDATE oauth_tokens SET access_token = ?1, expires_at = ?2 WHERE account_id = ?3",
+                    rusqlite::params![new_tokens.access_token, expires_str, account_id],
+                )?;
+                if let Some(ref rt) = new_tokens.refresh_token {
+                    conn.execute(
+                        "UPDATE oauth_tokens SET refresh_token = ?1 WHERE account_id = ?2",
+                        rusqlite::params![rt, account_id],
+                    )?;
+                }
+            }
+
+            // Cache the new token in memory
+            cache.tokens.insert(
+                account_id.to_string(),
+                (new_tokens.access_token.clone(), Instant::now()),
+            );
+
+            Ok(new_tokens.access_token)
+        }
+        Err(e) => {
+            log::warn!("Token refresh failed for {account_id}: {e}");
+            // Cache the failure so we don't retry for FAILURE_COOLDOWN_SECS
+            cache.failures.insert(
+                account_id.to_string(),
+                (format!("Token refresh failed (will retry in {FAILURE_COOLDOWN_SECS}s): {e}"), Instant::now()),
+            );
+            Err(e)
         }
     }
-
-    Ok(new_tokens.access_token)
 }
 
 #[derive(Debug, serde::Deserialize)]
