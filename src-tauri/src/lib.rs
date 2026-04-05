@@ -14,21 +14,6 @@ use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Load .env file from project root (for GOOGLE_CLIENT_ID etc.)
-    let _ = dotenvy::from_path(
-        std::env::current_dir()
-            .unwrap_or_default()
-            .join(".env"),
-    );
-    // Also try the parent dir (when running from src-tauri/)
-    let _ = dotenvy::from_path(
-        std::env::current_dir()
-            .unwrap_or_default()
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join(".env"),
-    );
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
