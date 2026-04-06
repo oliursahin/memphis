@@ -194,6 +194,7 @@ function ShortcutsSection() {
     { keys: "Escape", action: "Go back" },
     { keys: "C", action: "Compose new email" },
     { keys: "R", action: "Reply" },
+    { keys: "⌘ R", action: "Reply all" },
     { keys: "E", action: "Archive" },
     { keys: "/", action: "Search" },
     { keys: "⌘ K", action: "Command bar" },

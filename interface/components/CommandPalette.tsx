@@ -17,7 +17,7 @@ const COMMANDS: Command[] = [
   // Actions — email operations
   { id: "compose", label: "Compose new email", shortcut: "C", section: "Actions", icon: "edit" },
   { id: "reply", label: "Reply", shortcut: "R", section: "Actions", icon: "reply" },
-  { id: "reply-all", label: "Reply all", shortcut: "⇧R", section: "Actions", icon: "reply" },
+  { id: "reply-all", label: "Reply all", shortcut: "⌘R", section: "Actions", icon: "reply" },
   { id: "forward", label: "Forward", shortcut: "F", section: "Actions", icon: "forward" },
   { id: "archive", label: "Archive", shortcut: "E", section: "Actions", icon: "archive" },
   { id: "mark-done", label: "Mark as done", shortcut: "E", section: "Actions", icon: "done" },

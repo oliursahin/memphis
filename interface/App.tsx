@@ -98,6 +98,7 @@ export default function App() {
   const [showCommandBar, setShowCommandBar] = createSignal(false);
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [inlineReply, setInlineReply] = createSignal(false);
+  const [replyAll, setReplyAll] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
   const [showAccountPicker, setShowAccountPicker] = createSignal(false);
 
@@ -476,8 +477,10 @@ export default function App() {
       // Compose / reply
       case "compose": setComposeInitial(null); setShowCompose(true); break;
       case "reply":
+        if (openThread()) { setReplyAll(false); setInlineReply(true); }
+        break;
       case "reply-all":
-        if (openThread()) setInlineReply(true);
+        if (openThread()) { setReplyAll(true); setInlineReply(true); }
         break;
       case "forward": {
         const thread = openThread();
@@ -581,7 +584,7 @@ export default function App() {
       if (showCompose()) { setShowCompose(false); return; }
       if (showSearch()) { setShowSearch(false); return; }
       if (showCommandBar()) { setShowCommandBar(false); return; }
-      if (inlineReply()) { setInlineReply(false); return; }
+      if (inlineReply()) { setInlineReply(false); setReplyAll(false); return; }
       if (showSettings()) { setShowSettings(false); return; }
       if (activeMailbox()) { setActiveMailbox(null); return; }
       if (openThread()) { setOpenThread(null); return; }
@@ -634,12 +637,15 @@ export default function App() {
         if (!openThread() && selectedId()) selectAndOpen(selectedId()!);
         break;
       case "c":
-        e.preventDefault();
-        setShowCompose(true);
+        if (!e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          setShowCompose(true);
+        }
         break;
       case "r":
         if (openThread()) {
           e.preventDefault();
+          setReplyAll(e.metaKey || e.ctrlKey);
           setInlineReply(true);
         }
         break;
@@ -865,10 +871,11 @@ export default function App() {
                     <ThreadView
                       threadId={thread().id}
                       subject={thread().subject}
-                      onBack={() => { setOpenThread(null); setInlineReply(false); }}
+                      onBack={() => { setOpenThread(null); setInlineReply(false); setReplyAll(false); }}
                       replyOpen={inlineReply()}
+                      replyAll={replyAll()}
                       onReplyOpen={() => setInlineReply(true)}
-                      onReplyClose={() => setInlineReply(false)}
+                      onReplyClose={() => { setInlineReply(false); setReplyAll(false); }}
                     />
                   </div>
                   <div class="w-[260px] flex-shrink-0 overflow-y-auto">
