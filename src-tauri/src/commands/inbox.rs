@@ -857,6 +857,56 @@ pub async fn send_reply(
     Ok(())
 }
 
+/// Save (create or update) a draft in Gmail.
+/// Returns the draft ID so the frontend can update it in-place.
+#[tauri::command]
+pub async fn save_draft(
+    state: State<'_, AppState>,
+    draft_id: Option<String>,
+    to: String,
+    cc: Option<String>,
+    bcc: Option<String>,
+    subject: String,
+    body: String,
+) -> Result<String, Error> {
+    let (client, from_email, from_display) = get_gmail_client_with_sender(&state).await?;
+    let raw = build_rfc2822(&EmailParams {
+        from_display: sanitize_header(&from_display),
+        from_email: sanitize_header(&from_email),
+        to: sanitize_header(&to),
+        cc: cc.map(|v| sanitize_header(&v)),
+        bcc: bcc.map(|v| sanitize_header(&v)),
+        subject: sanitize_header(&subject),
+        body,
+        in_reply_to: None,
+    });
+    let encoded = URL_SAFE_NO_PAD.encode(raw.as_bytes());
+
+    let id = if let Some(existing_id) = draft_id {
+        client.update_draft(&existing_id, &encoded).await?;
+        log::info!("Updated draft {existing_id}");
+        existing_id
+    } else {
+        let new_id = client.create_draft(&encoded).await?;
+        log::info!("Created draft {new_id}");
+        new_id
+    };
+
+    Ok(id)
+}
+
+/// Delete a draft from Gmail.
+#[tauri::command]
+pub async fn delete_draft(
+    state: State<'_, AppState>,
+    draft_id: String,
+) -> Result<(), Error> {
+    let (client, _, _) = get_gmail_client_with_sender(&state).await?;
+    client.delete_draft(&draft_id).await?;
+    log::info!("Deleted draft {draft_id}");
+    Ok(())
+}
+
 /// Strip CR/LF from a header value to prevent CRLF injection.
 fn sanitize_header(val: &str) -> String {
     val.replace(['\r', '\n'], "")
