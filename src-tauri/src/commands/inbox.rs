@@ -144,6 +144,9 @@ async fn stubs_to_thread_rows(
                             date: date_display,
                             is_read,
                             message_count: messages.len() as u32,
+                            label_ids: None,
+                            sender_emails: None,
+                            is_calendar: None,
                         })
                     }
                     Err(e) => {
@@ -240,6 +243,12 @@ pub struct ThreadRow {
     pub date: String,
     pub is_read: bool,
     pub message_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label_ids: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_emails: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_calendar: Option<bool>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -294,12 +303,80 @@ pub async fn list_inbox(
     })
 }
 
+/// Fetch all cached threads from SQLite for the active account.
+/// The frontend filters these into splits locally — one call replaces N split queries.
+#[tauri::command]
+pub async fn list_inbox_cached(
+    state: State<'_, AppState>,
+) -> Result<Vec<ThreadRow>, Error> {
+    let threads = {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        let account_id = resolve_account_id(&conn)?;
+
+        let mut stmt = conn.prepare(
+            "SELECT provider_thread_id, subject, snippet, from_name, from_email,
+                    last_message_at, message_count, is_read, label_ids, sender_emails,
+                    is_calendar
+             FROM threads
+             WHERE account_id = ?1
+             ORDER BY CAST(last_message_at AS INTEGER) DESC
+             LIMIT 1000"
+        )?;
+
+        let rows = stmt.query_map([&account_id], |row| {
+            let provider_id: String = row.get(0)?;
+            let last_message_at: String = row.get(5)?;
+            let is_read: bool = row.get(7)?;
+            let label_ids_json: String = row.get(8)?;
+            let sender_emails_json: String = row.get(9)?;
+            let is_calendar: bool = row.get(10)?;
+
+            let date_display = last_message_at
+                .parse::<i64>()
+                .ok()
+                .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms))
+                .map(|dt| dt.format("%b %d").to_string())
+                .unwrap_or_default();
+
+            let label_ids: Vec<String> =
+                serde_json::from_str(&label_ids_json).unwrap_or_default();
+            let sender_emails: Vec<String> =
+                serde_json::from_str(&sender_emails_json).unwrap_or_default();
+
+            Ok(ThreadRow {
+                id: provider_id.clone(),
+                gmail_thread_id: provider_id,
+                subject: row.get(1)?,
+                snippet: row.get(2)?,
+                from_name: row.get(3)?,
+                from_email: row.get(4)?,
+                date: date_display,
+                is_read,
+                message_count: row.get(6)?,
+                label_ids: Some(label_ids),
+                sender_emails: Some(sender_emails),
+                is_calendar: Some(is_calendar),
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+
+    log::info!("list_inbox_cached: returning {} threads", threads.len());
+    Ok(threads)
+}
+
 /// Archive a thread (remove INBOX label in Gmail).
 #[tauri::command]
 pub async fn archive_thread(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<(), Error> {
+    // Optimistic cache update
+    {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        let _ = crate::db::threads::update_cached_labels(&conn, &thread_id, &[], &["INBOX"]);
+    }
     let client = get_gmail_client(&state).await?;
     client.modify_thread(&thread_id, &[], &["INBOX"]).await?;
     log::info!("Archived thread {thread_id}");
@@ -312,6 +389,10 @@ pub async fn trash_thread(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<(), Error> {
+    {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        let _ = crate::db::threads::update_cached_labels(&conn, &thread_id, &["TRASH"], &["INBOX"]);
+    }
     let client = get_gmail_client(&state).await?;
     client.modify_thread(&thread_id, &["TRASH"], &["INBOX"]).await?;
     log::info!("Trashed thread {thread_id}");
@@ -324,6 +405,10 @@ pub async fn mark_thread_read(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<(), Error> {
+    {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        let _ = crate::db::threads::update_cached_labels(&conn, &thread_id, &[], &["UNREAD"]);
+    }
     let client = get_gmail_client(&state).await?;
     client.modify_thread(&thread_id, &[], &["UNREAD"]).await?;
     log::info!("Marked thread {thread_id} as read");
@@ -336,6 +421,10 @@ pub async fn mark_thread_unread(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<(), Error> {
+    {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        let _ = crate::db::threads::update_cached_labels(&conn, &thread_id, &["UNREAD"], &[]);
+    }
     let client = get_gmail_client(&state).await?;
     client.modify_thread(&thread_id, &["UNREAD"], &[]).await?;
     log::info!("Marked thread {thread_id} as unread");
@@ -349,6 +438,14 @@ pub async fn star_thread(
     thread_id: String,
     starred: bool,
 ) -> Result<(), Error> {
+    {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        if starred {
+            let _ = crate::db::threads::update_cached_labels(&conn, &thread_id, &["STARRED"], &[]);
+        } else {
+            let _ = crate::db::threads::update_cached_labels(&conn, &thread_id, &[], &["STARRED"]);
+        }
+    }
     let client = get_gmail_client(&state).await?;
     if starred {
         client.modify_thread(&thread_id, &["STARRED"], &[]).await?;
@@ -365,6 +462,10 @@ pub async fn spam_thread(
     state: State<'_, AppState>,
     thread_id: String,
 ) -> Result<(), Error> {
+    {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        let _ = crate::db::threads::update_cached_labels(&conn, &thread_id, &["SPAM"], &["INBOX"]);
+    }
     let client = get_gmail_client(&state).await?;
     client.modify_thread(&thread_id, &["SPAM"], &["INBOX"]).await?;
     log::info!("Reported thread {thread_id} as spam");
@@ -379,6 +480,12 @@ pub async fn modify_thread_labels(
     add_label_ids: Vec<String>,
     remove_label_ids: Vec<String>,
 ) -> Result<(), Error> {
+    {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        let add: Vec<&str> = add_label_ids.iter().map(|s| s.as_str()).collect();
+        let remove: Vec<&str> = remove_label_ids.iter().map(|s| s.as_str()).collect();
+        let _ = crate::db::threads::update_cached_labels(&conn, &thread_id, &add, &remove);
+    }
     let client = get_gmail_client(&state).await?;
     let add: Vec<&str> = add_label_ids.iter().map(|s| s.as_str()).collect();
     let remove: Vec<&str> = remove_label_ids.iter().map(|s| s.as_str()).collect();
