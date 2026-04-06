@@ -115,7 +115,7 @@ function AccountsSection(props: { onAccountsChanged?: () => void; onNewAccount?:
   const addAccount = async () => {
     setAdding(true);
     try {
-      const beforeIds = new Set(accounts().map((a) => a.id));
+      const beforeIds = new Set((await invoke<Account[]>("get_accounts")).map((a) => a.id));
       await invoke("start_oauth_flow");
       await fetchAccounts();
       props.onAccountsChanged?.();
