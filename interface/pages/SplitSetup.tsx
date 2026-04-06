@@ -24,8 +24,8 @@ interface SplitSetupProps {
 
 // Smart splits — some use labels, some use queries
 const SUGGESTED_SPLITS: { id: string; name: string; query: string }[] = [
-  { id: "important", name: "Important", query: "category:primary" },
-  { id: "calendar", name: "Calendar", query: "{filename:ics from:calendar-notification@google.com}" },
+  { id: "important", name: "Important", query: "is:important -category:promotions -category:social -category:forums" },
+  { id: "calendar", name: "Calendar", query: "filename:ics" },
   { id: "github", name: "GitHub", query: "from:notifications@github.com" },
   { id: "others", name: "Others", query: "*" },
 ];

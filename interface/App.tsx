@@ -132,7 +132,7 @@ export default function App() {
   const [activeMailbox, setActiveMailbox] = createSignal<string | null>(null);
 
   // Bump this whenever default split queries change to force re-setup
-  const SPLITS_VERSION = 6;
+  const SPLITS_VERSION = 9;
 
   const refreshAccounts = async () => {
     try {
@@ -157,6 +157,8 @@ export default function App() {
     setActiveMailbox(null);
     const needsSetupNow = await loadSplitsForAccount(accountId);
     if (needsSetupNow) setNeedsSetup(true);
+    // Trigger sync for the new account so its cache gets populated
+    invoke("trigger_sync").catch(console.error);
   };
 
   // Load splits for a given account, returning true if setup is needed
@@ -195,75 +197,135 @@ export default function App() {
     }
   };
 
-  // Build the query for a split, excluding other splits from broad catch-all splits only
-  const buildQueryForSplit = (splitId: string): string | undefined => {
-    const allSplits = splits();
-    const split = allSplits.find((s) => s.id === splitId);
-    if (!split?.query) return undefined;
+  // ── Local split filtering (replaces per-split Gmail API calls) ──
 
-    // Helper: negate a split query for exclusion
-    const negate = (q: string): string => {
-      if (q.startsWith("{") && q.endsWith("}")) {
-        // OR group like {filename:ics from:x} — negate each term
-        return q.slice(1, -1).trim().split(/\s+/).map((t) => `-${t}`).join(" ");
-      }
-      return `-${q}`;
-    };
-
-    // Catch-all split (* = everything not matched by other splits)
-    if (split.query === "*") {
-      const exclusions = allSplits
-        .filter((s) => s.id !== splitId && s.query && s.query !== "*")
-        .map((s) => negate(s.query!))
-        .join(" ");
-      return `in:inbox ${exclusions}`.trim();
+  // Returns true/false for evaluatable terms, null for terms we can't check locally
+  const evaluateTerm = (thread: ThreadRow, labels: Set<string>, term: string): boolean | null => {
+    const negated = term.startsWith("-");
+    const clean = negated ? term.slice(1) : term;
+    let matches: boolean;
+    if (clean === "in:inbox") matches = labels.has("INBOX");
+    else if (clean === "is:important") matches = labels.has("IMPORTANT");
+    else if (clean === "is:starred") matches = labels.has("STARRED");
+    else if (clean.startsWith("category:")) {
+      matches = labels.has(`CATEGORY_${clean.slice(9).toUpperCase()}`);
+    } else if (clean.startsWith("from:")) {
+      // Check all sender emails in the thread (matches Gmail search behavior)
+      const target = clean.slice(5).toLowerCase();
+      const senders = thread.senderEmails;
+      matches = senders && senders.length > 0
+        ? senders.some((e) => e.toLowerCase() === target)
+        : thread.fromEmail.toLowerCase() === target;
+    } else {
+      return null; // Can't evaluate locally (filename:, has:, etc.)
     }
-
-    // label: splits manage their own scope
-    if (split.query.startsWith("label:")) return `in:inbox ${split.query}`;
-
-    // Other specific matchers (from:, filename:, OR groups, etc.) need in:inbox
-    // so archived threads don't pollute listings and unread badges
-    if (!split.query.startsWith("category:")) return `in:inbox ${split.query}`;
-
-    // category: splits — exclude non-label, non-category splits so they don't overlap
-    const others = allSplits
-      .filter((s) => s.id !== splitId && s.query && !s.query.startsWith("label:") && !s.query.startsWith("category:") && s.query !== "*")
-      .map((s) => negate(s.query!));
-
-    if (others.length === 0) return split.query;
-    return `${split.query} ${others.join(" ")}`;
+    return negated ? !matches : matches;
   };
 
-  // Prefetch all splits concurrently — each result updates cache as it arrives
+  const matchesSplitQuery = (thread: ThreadRow, query: string): boolean => {
+    if (!query) return true;
+    const labels = new Set(thread.labelIds || []);
+    // OR group: {term1 term2 ...} — match if any known term is true
+    if (query.startsWith("{") && query.endsWith("}")) {
+      const terms = query.slice(1, -1).trim().split(/\s+/);
+      const results = terms.map((t) => evaluateTerm(thread, labels, t));
+      const known = results.filter((r): r is boolean => r !== null);
+      return known.length > 0 ? known.some(Boolean) : false;
+    }
+    // AND: all known terms must match (unknown terms are skipped)
+    const terms = query.trim().split(/\s+/);
+    const results = terms.map((t) => evaluateTerm(thread, labels, t));
+    const known = results.filter((r): r is boolean => r !== null);
+    return known.length > 0 ? known.every(Boolean) : true;
+  };
+
+  // Helper: is this thread a "known category" (calendar or GitHub)?
+  // Used to exclude from broad splits like Important even when those splits aren't configured.
+  const isKnownCategory = (thread: ThreadRow): boolean => {
+    if (thread.isCalendar) return true;
+    const senders = thread.senderEmails;
+    if (senders && senders.some((e) => e === "notifications@github.com")) return true;
+    if (thread.fromEmail === "notifications@github.com") return true;
+    return false;
+  };
+
+  const threadMatchesSplit = (
+    thread: ThreadRow, split: SplitConfig, allSplits: SplitConfig[]
+  ): boolean => {
+    const labels = new Set(thread.labelIds || []);
+
+    // Catch-all: everything in INBOX not matched by other specific splits
+    if (split.query === "*") {
+      if (!labels.has("INBOX")) return false;
+      return !allSplits.some(
+        (s) => s.id !== split.id && s.query !== "*" && threadMatchesSplit(thread, s, [])
+      );
+    }
+    // Calendar split: use the backend-detected flag (Gmail filename:ics search)
+    if (split.id === "calendar") {
+      if (!labels.has("INBOX")) return false;
+      return thread.isCalendar === true;
+    }
+    // Label-based split (has gmailLabelId)
+    if (split.gmailLabelId) return labels.has(split.gmailLabelId);
+    // Label query without gmailLabelId
+    if (split.query?.startsWith("label:")) return false;
+    // Must be in INBOX for all other splits
+    if (!labels.has("INBOX")) return false;
+    // Specific splits (from:, OR groups) — just check the query
+    if (split.query?.startsWith("from:") || split.query?.startsWith("{")) {
+      return matchesSplitQuery(thread, split.query || "");
+    }
+    // Broad splits (is:important, etc.) — check query AND exclude known categories + specific splits
+    if (!matchesSplitQuery(thread, split.query || "")) return false;
+    // Exclude calendar/GitHub threads from broad splits even if those splits aren't configured
+    if (isKnownCategory(thread)) return false;
+    if (allSplits.length > 0) {
+      const inSpecific = allSplits.some((s) => {
+        if (s.id === split.id || !s.query || s.query === "*" || s.id === "calendar") return false;
+        if (s.query.startsWith("from:") || s.query.startsWith("{") || s.gmailLabelId) {
+          return threadMatchesSplit(thread, s, []);
+        }
+        return false;
+      });
+      if (inSpecific) return false;
+    }
+    return true;
+  };
+
+  const filterThreadsForSplit = (
+    allThreads: ThreadRow[], split: SplitConfig, allSplits: SplitConfig[]
+  ): ThreadRow[] => {
+    return allThreads.filter((t) => threadMatchesSplit(t, split, allSplits));
+  };
+
+  // Load all threads from SQLite cache, filter into splits locally
   const loadAllSplits = async () => {
     const allSplits = splits();
     if (allSplits.length === 0) return;
 
     setLoadingSplits(new Set(allSplits.map((s) => s.id)));
 
-    await Promise.all(
-      allSplits.map(async (split) => {
-        const query = buildQueryForSplit(split.id);
-        try {
-          const res = await invoke<InboxResponse>("list_inbox", {
-            maxResults: 50,
-            labelId: null,
-            query: query ?? null,
-          });
-          setSplitThreads((prev) => ({ ...prev, [split.id]: res.threads }));
-        } catch (e) {
-          console.error(`Failed to load ${split.id}:`, e);
-        } finally {
-          setLoadingSplits((prev) => {
-            const next = new Set(prev);
-            next.delete(split.id);
-            return next;
-          });
-        }
-      })
-    );
+    try {
+      const allThreads = await invoke<ThreadRow[]>("list_inbox_cached");
 
+      if (allThreads.length === 0) {
+        // Cache empty — could be initial sync or genuinely empty inbox.
+        // Clear loading so the UI shows empty splits instead of infinite spinner.
+        setLoadingSplits(new Set<string>());
+        return;
+      }
+
+      const newSplitThreads: Record<string, ThreadRow[]> = {};
+      for (const split of allSplits) {
+        newSplitThreads[split.id] = filterThreadsForSplit(allThreads, split, allSplits);
+      }
+      setSplitThreads(newSplitThreads);
+      setLoadingSplits(new Set<string>());
+    } catch (e) {
+      console.error("Failed to load from cache:", e);
+      setLoadingSplits(new Set<string>());
+    }
   };
 
   // Switching tabs is instant — data already in cache
@@ -698,7 +760,6 @@ export default function App() {
           syncDebounceTimer = setTimeout(() => {
             syncDebounceTimer = null;
             loadAllSplits();
-            prefetchAllMailboxes();
           }, 300);
         }
       },
@@ -708,18 +769,12 @@ export default function App() {
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
         invoke("trigger_sync").catch(console.error);
+        loadAllSplits(); // Quick refresh from local cache
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
 
-    // Periodic refresh every 60s so inbox stays current even if backend sync stalls
-    const refreshInterval = setInterval(() => {
-      loadAllSplits();
-      prefetchAllMailboxes();
-    }, 30_000);
-
     onCleanup(() => {
-      clearInterval(refreshInterval);
       unlistenPromise.then((fn) => fn());
       document.removeEventListener("visibilitychange", handleVisibility);
     });

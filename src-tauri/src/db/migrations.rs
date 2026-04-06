@@ -2,10 +2,24 @@ use rusqlite::Connection;
 
 use crate::error::Error;
 
-const MIGRATIONS: &[(&str, &str)] = &[(
-    "001_initial",
-    include_str!("../../migrations/001_initial.sql"),
-)];
+const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "001_initial",
+        include_str!("../../migrations/001_initial.sql"),
+    ),
+    (
+        "002_thread_cache",
+        include_str!("../../migrations/002_thread_cache.sql"),
+    ),
+    (
+        "003_sender_emails",
+        include_str!("../../migrations/003_sender_emails.sql"),
+    ),
+    (
+        "004_calendar_flag",
+        include_str!("../../migrations/004_calendar_flag.sql"),
+    ),
+];
 
 pub fn run_migrations(conn: &Connection) -> Result<(), Error> {
     conn.execute_batch(

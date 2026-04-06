@@ -10,6 +10,9 @@ export interface ThreadRow {
   date: string;
   isRead: boolean;
   messageCount: number;
+  labelIds?: string[];
+  senderEmails?: string[];
+  isCalendar?: boolean;
 }
 
 interface InboxProps {

@@ -67,6 +67,7 @@ pub fn run() {
             commands::auth::refresh_account_profiles,
             commands::auth::logout,
             commands::inbox::list_inbox,
+            commands::inbox::list_inbox_cached,
             commands::inbox::archive_thread,
             commands::inbox::get_thread_detail,
             commands::inbox::send_reply,
