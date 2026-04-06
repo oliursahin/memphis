@@ -92,9 +92,9 @@ export default function App() {
   const [activeTab, setActiveTab] = createSignal("important");
   const [openThread, setOpenThread] = createSignal<OpenThread | null>(null);
   const [showCompose, setShowCompose] = createSignal(false);
-  const [composeInitial, setComposeInitial] = createSignal<{ subject?: string; to?: string; body?: string; cc?: string; bcc?: string } | null>(null);
+  const [composeInitial, setComposeInitial] = createSignal<{ subject?: string; to?: string; body?: string; bodyHtml?: string; cc?: string; bcc?: string } | null>(null);
   const [composeSplitId, setComposeSplitId] = createSignal<string | null>(null); // which split compose was opened from
-  const [lastDraftData, setLastDraftData] = createSignal<{ to: string; subject: string; body: string; cc?: string; bcc?: string } | null>(null); // stash draft data for re-opening
+  const [lastDraftData, setLastDraftData] = createSignal<{ to: string; subject: string; body: string; bodyHtml?: string; cc?: string; bcc?: string } | null>(null); // stash draft data for re-opening
   const [labelPickerMode, setLabelPickerMode] = createSignal<"apply-label" | "remove-label" | "move-to" | null>(null);
   const [showSearch, setShowSearch] = createSignal(false);
   const [showCommandBar, setShowCommandBar] = createSignal(false);
@@ -322,8 +322,8 @@ export default function App() {
       const newSplitThreads: Record<string, ThreadRow[]> = {};
       for (const split of allSplits) {
         const filtered = filterThreadsForSplit(allThreads, split, allSplits);
-        // Preserve any local draft entries through refetch
-        const drafts = (prev[split.id] ?? []).filter((t) => t.labelIds?.includes("DRAFT"));
+        // Preserve local draft placeholders through refetch (scoped by ID prefix to avoid matching real Gmail drafts)
+        const drafts = (prev[split.id] ?? []).filter((t) => t.id.startsWith("draft-"));
         newSplitThreads[split.id] = [...drafts, ...filtered];
       }
       setSplitThreads(newSplitThreads);
@@ -969,7 +969,7 @@ export default function App() {
                 onOpenThread={(t) => setOpenThread(t)}
                 onArchive={archiveThread}
                 onTrash={trashThread}
-                onCompose={() => {
+                onCompose={(_draftId) => {
                   const draft = lastDraftData();
                   openCompose(draft ?? undefined);
                 }}
@@ -1020,11 +1020,12 @@ export default function App() {
               initialSubject={composeInitial()?.subject}
               initialTo={composeInitial()?.to}
               initialBody={composeInitial()?.body}
+              initialBodyHtml={composeInitial()?.bodyHtml}
               initialCc={composeInitial()?.cc}
               initialBcc={composeInitial()?.bcc}
               onDraftSaved={(draft) => {
                 // Stash full draft data so it can be restored if re-opened
-                setLastDraftData({ to: draft.to, subject: draft.subject, body: draft.body, cc: draft.cc, bcc: draft.bcc });
+                setLastDraftData({ to: draft.to, subject: draft.subject, body: draft.body, bodyHtml: draft.bodyHtml, cc: draft.cc, bcc: draft.bcc });
 
                 const draftThread: ThreadRow = {
                   id: `draft-${draft.id}`,
@@ -1081,7 +1082,7 @@ export default function App() {
                     setSelectedId(thread.id);
                     setOpenThread({ id: thread.id, subject: thread.subject });
                   }}
-                  onCompose={() => {
+                  onCompose={(_draftId) => {
                     const draft = lastDraftData();
                     setActiveMailbox(null);
                     openCompose(draft ?? undefined);
@@ -1185,7 +1186,7 @@ function MailboxView(props: {
   loading: boolean;
   onBack: () => void;
   onOpenThread: (thread: ThreadRow) => void;
-  onCompose?: () => void;
+  onCompose?: (draftId: string) => void;
 }) {
   return (
     <div class="absolute inset-0 overflow-y-auto pt-3 pb-12">
@@ -1209,7 +1210,7 @@ function MailboxView(props: {
               class="group flex items-center gap-3 px-20 py-2.5 cursor-pointer hover:bg-zinc-50"
               onClick={() => {
                 if (thread.labelIds?.includes("DRAFT")) {
-                  props.onCompose?.();
+                  props.onCompose?.(thread.id);
                   return;
                 }
                 props.onOpenThread(thread);

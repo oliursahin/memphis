@@ -23,7 +23,7 @@ interface InboxProps {
   onSelect: (id: string) => void;
   onArchive: (threadId: string) => void;
   onTrash: (threadId: string) => void;
-  onCompose?: () => void;
+  onCompose?: (draftId: string) => void;
 }
 
 export default function Inbox(props: InboxProps) {
@@ -44,7 +44,7 @@ export default function Inbox(props: InboxProps) {
                   }`}
                   onClick={() => {
                     if (thread.labelIds?.includes("DRAFT")) {
-                      props.onCompose?.();
+                      props.onCompose?.(thread.id);
                       return;
                     }
                     props.onSelect(thread.id);
