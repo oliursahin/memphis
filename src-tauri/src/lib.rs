@@ -22,6 +22,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -53,7 +54,7 @@ pub fn run() {
             let sync_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let engine = SyncEngine::new(sync_handle, sync_db, sync_stop);
-                engine.run_poll_loop(30).await;
+                engine.run_poll_loop(5).await;
             });
 
             Ok(())

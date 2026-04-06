@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 use crate::db::threads::{upsert_thread, delete_cached_thread, mark_calendar_threads};
 use crate::error::Error;
@@ -18,6 +19,14 @@ use crate::integrations::gmail::sync as gmail_sync;
 pub struct SyncEvent {
     pub event_type: String,
     pub changed_thread_ids: Vec<String>,
+}
+
+/// Result of syncing a single account within a poll cycle.
+enum AccountSyncResult {
+    NoChanges,
+    Changes(Vec<String>),
+    CalendarOnly,
+    InitialComplete(Vec<String>),
 }
 
 pub struct SyncEngine {
@@ -84,15 +93,69 @@ impl SyncEngine {
         }
     }
 
-    /// Perform a single sync cycle. Returns a SyncEvent if there are changes, None otherwise.
+    /// Perform a single sync cycle across ALL active accounts.
+    /// Returns a SyncEvent if there are changes in any account, None otherwise.
     pub async fn do_sync_once(&self) -> Result<Option<SyncEvent>, Error> {
-        let account_id = {
+        let account_ids = {
             let conn = self.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
-            crate::commands::inbox::resolve_account_id(&conn)
-                .map_err(|_| Error::Internal("No active account for sync".into()))?
+            let mut stmt = conn.prepare(
+                "SELECT id FROM accounts WHERE is_active = 1 ORDER BY created_at ASC"
+            )?;
+            let ids: Vec<String> = stmt.query_map([], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::Internal(format!("Failed to list accounts: {e}")))?;
+            ids
         };
 
-        // Read existing checkpoint and cached thread count
+        if account_ids.is_empty() {
+            return Ok(None);
+        }
+
+        let mut all_changed_ids = Vec::new();
+        let mut any_calendar_changed = false;
+        let mut had_initial_sync = false;
+
+        for account_id in &account_ids {
+            match self.do_sync_account(account_id).await {
+                Ok(AccountSyncResult::Changes(thread_ids)) => {
+                    all_changed_ids.extend(thread_ids);
+                }
+                Ok(AccountSyncResult::CalendarOnly) => {
+                    any_calendar_changed = true;
+                }
+                Ok(AccountSyncResult::InitialComplete(thread_ids)) => {
+                    all_changed_ids.extend(thread_ids);
+                    had_initial_sync = true;
+                }
+                Ok(AccountSyncResult::NoChanges) => {}
+                Err(e) => {
+                    log::warn!("Sync failed for account {account_id}: {e}");
+                }
+            }
+        }
+
+        if had_initial_sync {
+            Ok(Some(SyncEvent {
+                event_type: "initial_sync_complete".into(),
+                changed_thread_ids: all_changed_ids,
+            }))
+        } else if !all_changed_ids.is_empty() {
+            Ok(Some(SyncEvent {
+                event_type: "threads_changed".into(),
+                changed_thread_ids: all_changed_ids,
+            }))
+        } else if any_calendar_changed {
+            Ok(Some(SyncEvent {
+                event_type: "calendar_updated".into(),
+                changed_thread_ids: vec!["_calendar_refresh".into()],
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Sync a single account. Returns what changed.
+    async fn do_sync_account(&self, account_id: &str) -> Result<AccountSyncResult, Error> {
         let (checkpoint, cached_count) = {
             let conn = self.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
             let cp = conn.query_row(
@@ -109,50 +172,52 @@ impl SyncEngine {
             (cp, count)
         };
 
-        // If checkpoint exists but cache is empty (e.g. upgrade from old engine),
-        // do a full initial sync to populate the cache
+        // If checkpoint exists but cache is empty, do a full initial sync
         if checkpoint.is_some() && cached_count == 0 {
-            log::info!("Checkpoint exists but cache is empty — doing full initial sync");
-            return self.do_initial_sync(&account_id).await;
+            log::info!("Checkpoint exists but cache is empty for {account_id} — doing full initial sync");
+            return self.do_initial_sync(account_id).await
+                .map(|ev| AccountSyncResult::InitialComplete(
+                    ev.map(|e| e.changed_thread_ids).unwrap_or_default()
+                ));
         }
 
         match checkpoint {
             Some(ref cp) => {
-                // Incremental sync: get changed thread IDs, fetch and cache them
-                match gmail_sync::incremental_sync(&self.db, &account_id, cp).await {
+                match gmail_sync::incremental_sync(&self.db, account_id, cp).await {
                     Ok(result) => {
                         if result.has_changes() {
-                            self.fetch_and_cache_threads(&account_id, &result.changed_thread_ids).await?;
+                            self.fetch_and_cache_threads(account_id, &result.changed_thread_ids).await?;
                         }
-                        // Always re-detect calendar threads (1 API call)
-                        let cal_changed = self.detect_calendar_threads(&account_id).await
-                            .unwrap_or_else(|e| { log::warn!("Calendar detection failed: {e}"); false });
-                        gmail_sync::advance_checkpoint(&self.db, &account_id, &result.new_history_id)?;
+                        // Fire native notifications for new inbox messages
+                        if !result.new_inbox_thread_ids.is_empty() {
+                            self.notify_new_threads(account_id, &result.new_inbox_thread_ids);
+                        }
+                        let cal_changed = self.detect_calendar_threads(account_id).await
+                            .unwrap_or_else(|e| { log::warn!("Calendar detection failed for {account_id}: {e}"); false });
+                        gmail_sync::advance_checkpoint(&self.db, account_id, &result.new_history_id)?;
                         Ok(if result.has_changes() {
-                            Some(SyncEvent {
-                                event_type: "threads_changed".into(),
-                                changed_thread_ids: result.changed_thread_ids,
-                            })
+                            AccountSyncResult::Changes(result.changed_thread_ids)
                         } else if cal_changed {
-                            // Calendar flags changed — notify frontend to re-filter splits
-                            Some(SyncEvent {
-                                event_type: "calendar_updated".into(),
-                                changed_thread_ids: vec!["_calendar_refresh".into()],
-                            })
+                            AccountSyncResult::CalendarOnly
                         } else {
-                            None
+                            AccountSyncResult::NoChanges
                         })
                     }
                     Err(Error::NotFound(_)) => {
-                        log::warn!("History expired, doing full re-sync");
-                        self.do_initial_sync(&account_id).await
+                        log::warn!("History expired for {account_id}, doing full re-sync");
+                        self.do_initial_sync(account_id).await
+                            .map(|ev| AccountSyncResult::InitialComplete(
+                                ev.map(|e| e.changed_thread_ids).unwrap_or_default()
+                            ))
                     }
                     Err(e) => Err(e),
                 }
             }
             None => {
-                // No checkpoint yet — do initial sync
-                self.do_initial_sync(&account_id).await
+                self.do_initial_sync(account_id).await
+                    .map(|ev| AccountSyncResult::InitialComplete(
+                        ev.map(|e| e.changed_thread_ids).unwrap_or_default()
+                    ))
             }
         }
     }
@@ -260,6 +325,73 @@ impl SyncEngine {
         mark_calendar_threads(&conn, account_id, &calendar_ids)?;
 
         Ok(current_ids != new_ids)
+    }
+
+    /// Send native OS notifications for newly arrived inbox threads.
+    /// Suppresses notifications when the app window is focused.
+    fn notify_new_threads(&self, account_id: &str, new_thread_ids: &[String]) {
+        // Skip if user is looking at the app
+        if let Some(window) = self.app_handle.get_webview_window("main") {
+            if window.is_focused().unwrap_or(false) {
+                return;
+            }
+        }
+
+        // Query cached thread details for notification content
+        let threads_info: Vec<(String, String, String)> = {
+            let conn = match self.db.lock() {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            new_thread_ids.iter().filter_map(|tid| {
+                conn.query_row(
+                    "SELECT from_name, subject, snippet FROM threads
+                     WHERE account_id = ?1 AND provider_thread_id = ?2
+                     AND is_archived = 0 AND is_trashed = 0",
+                    rusqlite::params![account_id, tid],
+                    |row| Ok((
+                        row.get::<_, String>(0).unwrap_or_default(),
+                        row.get::<_, String>(1).unwrap_or_default(),
+                        row.get::<_, String>(2).unwrap_or_default(),
+                    )),
+                ).ok()
+            }).collect()
+        };
+
+        if threads_info.is_empty() {
+            return;
+        }
+
+        if threads_info.len() == 1 {
+            let (from_name, subject, snippet) = &threads_info[0];
+            let title = if from_name.is_empty() { "New email" } else { from_name.as_str() };
+            let body = if snippet.is_empty() {
+                subject.clone()
+            } else {
+                format!("{}\n{}", subject, snippet)
+            };
+            let _ = self.app_handle
+                .notification()
+                .builder()
+                .title(title)
+                .body(&body)
+                .show();
+        } else {
+            let summary = threads_info.iter()
+                .take(3)
+                .map(|(name, subj, _)| {
+                    let sender = if name.is_empty() { "Unknown" } else { name.as_str() };
+                    format!("{}: {}", sender, subj)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let _ = self.app_handle
+                .notification()
+                .builder()
+                .title(&format!("{} new emails", threads_info.len()))
+                .body(&summary)
+                .show();
+        }
     }
 
     /// Fetch thread metadata from Gmail and upsert into SQLite cache.
