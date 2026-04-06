@@ -251,7 +251,7 @@ impl SyncEngine {
         let mut current_ids: Vec<String> = stmt.query_map(
             rusqlite::params![account_id],
             |row| row.get(0),
-        )?.filter_map(|r| r.ok()).collect();
+        )?.collect::<Result<Vec<_>, _>>()?;
         current_ids.sort();
 
         let mut new_ids = calendar_ids.clone();
