@@ -172,17 +172,22 @@ struct EmailParams {
     bcc: Option<String>,
     subject: String,
     body: String,
+    body_html: Option<String>,
     in_reply_to: Option<String>,
 }
 
 /// Build an RFC 2822 MIME message (multipart/alternative with plain + HTML).
 fn build_rfc2822(params: &EmailParams) -> String {
     let body_plain = params.body.clone();
-    let body_html = params.body
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('\n', "<br>");
+    let body_html = if let Some(html) = &params.body_html {
+        html.clone()
+    } else {
+        params.body
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('\n', "<br>")
+    };
 
     let boundary = format!("----=_Part_{}", uuid::Uuid::new_v4().as_simple());
     let date = chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S %z").to_string();
@@ -810,6 +815,7 @@ pub async fn send_email(
     bcc: Option<String>,
     subject: String,
     body: String,
+    body_html: Option<String>,
 ) -> Result<(), Error> {
     let (client, from_email, from_display) = get_gmail_client_with_sender(&state).await?;
     let raw = build_rfc2822(&EmailParams {
@@ -820,6 +826,7 @@ pub async fn send_email(
         bcc: bcc.map(|v| sanitize_header(&v)),
         subject: sanitize_header(&subject),
         body,
+        body_html: body_html,
         in_reply_to: None,
     });
     let encoded = URL_SAFE_NO_PAD.encode(raw.as_bytes());
@@ -849,11 +856,64 @@ pub async fn send_reply(
         bcc: bcc.map(|v| sanitize_header(&v)),
         subject: sanitize_header(&subject),
         body,
+        body_html: None,
         in_reply_to: Some(sanitize_header(&message_id)),
     });
     let encoded = URL_SAFE_NO_PAD.encode(raw.as_bytes());
     client.send_message(&encoded).await?;
     log::info!("Sent reply in thread {thread_id} to {to}");
+    Ok(())
+}
+
+/// Save (create or update) a draft in Gmail.
+/// Returns the draft ID so the frontend can update it in-place.
+#[tauri::command]
+pub async fn save_draft(
+    state: State<'_, AppState>,
+    draft_id: Option<String>,
+    to: String,
+    cc: Option<String>,
+    bcc: Option<String>,
+    subject: String,
+    body: String,
+    body_html: Option<String>,
+) -> Result<String, Error> {
+    let (client, from_email, from_display) = get_gmail_client_with_sender(&state).await?;
+    let raw = build_rfc2822(&EmailParams {
+        from_display: sanitize_header(&from_display),
+        from_email: sanitize_header(&from_email),
+        to: sanitize_header(&to),
+        cc: cc.map(|v| sanitize_header(&v)),
+        bcc: bcc.map(|v| sanitize_header(&v)),
+        subject: sanitize_header(&subject),
+        body,
+        body_html,
+        in_reply_to: None,
+    });
+    let encoded = URL_SAFE_NO_PAD.encode(raw.as_bytes());
+
+    let id = if let Some(existing_id) = draft_id {
+        client.update_draft(&existing_id, &encoded).await?;
+        log::info!("Updated draft {existing_id}");
+        existing_id
+    } else {
+        let new_id = client.create_draft(&encoded).await?;
+        log::info!("Created draft {new_id}");
+        new_id
+    };
+
+    Ok(id)
+}
+
+/// Delete a draft from Gmail.
+#[tauri::command]
+pub async fn delete_draft(
+    state: State<'_, AppState>,
+    draft_id: String,
+) -> Result<(), Error> {
+    let (client, _, _) = get_gmail_client_with_sender(&state).await?;
+    client.delete_draft(&draft_id).await?;
+    log::info!("Deleted draft {draft_id}");
     Ok(())
 }
 

@@ -92,7 +92,9 @@ export default function App() {
   const [activeTab, setActiveTab] = createSignal("important");
   const [openThread, setOpenThread] = createSignal<OpenThread | null>(null);
   const [showCompose, setShowCompose] = createSignal(false);
-  const [composeInitial, setComposeInitial] = createSignal<{ subject?: string } | null>(null);
+  const [composeInitial, setComposeInitial] = createSignal<{ subject?: string; to?: string; body?: string; bodyHtml?: string; cc?: string; bcc?: string } | null>(null);
+  const [composeSplitId, setComposeSplitId] = createSignal<string | null>(null); // which split compose was opened from
+  const [lastDraftData, setLastDraftData] = createSignal<{ to: string; subject: string; body: string; bodyHtml?: string; cc?: string; bcc?: string } | null>(null); // stash draft data for re-opening
   const [labelPickerMode, setLabelPickerMode] = createSignal<"apply-label" | "remove-label" | "move-to" | null>(null);
   const [showSearch, setShowSearch] = createSignal(false);
   const [showCommandBar, setShowCommandBar] = createSignal(false);
@@ -316,9 +318,13 @@ export default function App() {
         return;
       }
 
+      const prev = splitThreads();
       const newSplitThreads: Record<string, ThreadRow[]> = {};
       for (const split of allSplits) {
-        newSplitThreads[split.id] = filterThreadsForSplit(allThreads, split, allSplits);
+        const filtered = filterThreadsForSplit(allThreads, split, allSplits);
+        // Preserve local draft placeholders through refetch (scoped by ID prefix to avoid matching real Gmail drafts)
+        const drafts = (prev[split.id] ?? []).filter((t) => t.id.startsWith("draft-"));
+        newSplitThreads[split.id] = [...drafts, ...filtered];
       }
       setSplitThreads(newSplitThreads);
       setLoadingSplits(new Set<string>());
@@ -499,6 +505,52 @@ export default function App() {
   const trashThread = (threadId: string) => removeThread(threadId, "trash");
   const spamThread = (threadId: string) => removeThread(threadId, "spam");
 
+  // Open compose and immediately insert a draft placeholder into the active split
+  const openCompose = (opts?: { subject?: string; to?: string; body?: string; cc?: string; bcc?: string }) => {
+    const tab = activeTab();
+    setComposeSplitId(tab);
+    setComposeInitial(opts ?? null);
+    setShowCompose(true);
+
+    // Insert placeholder draft entry into the split right now
+    const draftThread: ThreadRow = {
+      id: `draft-compose-${Date.now()}`,
+      subject: opts?.subject || "(no subject)",
+      snippet: opts?.body?.slice(0, 100) || "",
+      fromName: opts?.to || "Me",
+      fromEmail: "",
+      date: "Draft",
+      isRead: true,
+      messageCount: 1,
+      labelIds: ["DRAFT"],
+    };
+
+    setSplitThreads((prev) => {
+      const existing = prev[tab] ?? [];
+      // Replace existing draft or prepend
+      const idx = existing.findIndex((t) => t.labelIds?.includes("DRAFT"));
+      if (idx >= 0) {
+        const next = [...existing];
+        next[idx] = draftThread;
+        return { ...prev, [tab]: next };
+      }
+      return { ...prev, [tab]: [draftThread, ...existing] };
+    });
+
+    // Also add to drafts mailbox
+    setMailboxes((prev) => {
+      const draftsBox = prev["drafts"] ?? { threads: [], loading: false };
+      const existing = draftsBox.threads;
+      const idx = existing.findIndex((t) => t.labelIds?.includes("DRAFT"));
+      if (idx >= 0) {
+        const next = [...existing];
+        next[idx] = draftThread;
+        return { ...prev, drafts: { ...draftsBox, threads: next } };
+      }
+      return { ...prev, drafts: { ...draftsBox, threads: [draftThread, ...existing] } };
+    });
+  };
+
   const handleLogout = async () => {
     try {
       await invoke("logout");
@@ -537,7 +589,7 @@ export default function App() {
       case "shortcuts": setShowSettings(true); break;
 
       // Compose / reply
-      case "compose": setComposeInitial(null); setShowCompose(true); break;
+      case "compose": openCompose(); break;
       case "reply":
         if (openThread()) { setReplyAll(false); setInlineReply(true); }
         break;
@@ -547,8 +599,7 @@ export default function App() {
       case "forward": {
         const thread = openThread();
         if (thread) {
-          setComposeInitial({ subject: `Fwd: ${thread.subject}` });
-          setShowCompose(true);
+          openCompose({ subject: `Fwd: ${thread.subject}` });
         }
         break;
       }
@@ -701,7 +752,7 @@ export default function App() {
       case "c":
         if (!e.metaKey && !e.ctrlKey) {
           e.preventDefault();
-          setShowCompose(true);
+          openCompose();
         }
         break;
       case "r":
@@ -825,7 +876,7 @@ export default function App() {
           {/* Account switcher — show active avatar, click to expand picker */}
           <div class="mt-1 flex flex-col items-center">
             <div
-              class={`w-8 h-8 rounded-full overflow-hidden border flex items-center justify-center text-[11px] font-medium cursor-pointer transition-colors ${
+              class={`w-6 h-6 rounded-full overflow-hidden border flex items-center justify-center text-[9px] font-medium cursor-pointer transition-colors ${
                 isInboxZero()
                   ? "border-white text-white bg-white/20"
                   : "border-zinc-800 text-zinc-800 bg-zinc-100"
@@ -918,6 +969,10 @@ export default function App() {
                 onOpenThread={(t) => setOpenThread(t)}
                 onArchive={archiveThread}
                 onTrash={trashThread}
+                onCompose={() => {
+                  const draft = lastDraftData();
+                  openCompose(draft ?? undefined);
+                }}
               />
             }>
               {(thread) => (
@@ -940,7 +995,77 @@ export default function App() {
               )}
             </Show>
           }>
-            <ComposeView onClose={() => { setShowCompose(false); setComposeInitial(null); }} initialSubject={composeInitial()?.subject} />
+            <ComposeView
+              onClose={() => {
+                setShowCompose(false);
+                setComposeInitial(null);
+                setComposeSplitId(null);
+              }}
+              onSent={() => {
+                // Remove draft entries from splits and mailboxes after sending
+                setLastDraftData(null);
+                setSplitThreads((prev) => {
+                  const next: Record<string, ThreadRow[]> = {};
+                  for (const [key, threads] of Object.entries(prev)) {
+                    next[key] = threads.filter((t) => !t.labelIds?.includes("DRAFT"));
+                  }
+                  return next;
+                });
+                setMailboxes((prev) => {
+                  const draftsBox = prev["drafts"];
+                  if (!draftsBox) return prev;
+                  return { ...prev, drafts: { ...draftsBox, threads: draftsBox.threads.filter((t) => !t.labelIds?.includes("DRAFT")) } };
+                });
+              }}
+              initialSubject={composeInitial()?.subject}
+              initialTo={composeInitial()?.to}
+              initialBody={composeInitial()?.body}
+              initialBodyHtml={composeInitial()?.bodyHtml}
+              initialCc={composeInitial()?.cc}
+              initialBcc={composeInitial()?.bcc}
+              onDraftSaved={(draft) => {
+                // Stash full draft data so it can be restored if re-opened
+                setLastDraftData({ to: draft.to, subject: draft.subject, body: draft.body, bodyHtml: draft.bodyHtml, cc: draft.cc, bcc: draft.bcc });
+
+                const draftThread: ThreadRow = {
+                  id: `draft-${draft.id}`,
+                  subject: draft.subject,
+                  snippet: draft.snippet,
+                  fromName: draft.to || "Me",
+                  fromEmail: "",
+                  date: "Draft",
+                  isRead: true,
+                  messageCount: 1,
+                  labelIds: ["DRAFT"],
+                };
+
+                // Update draft in the split where compose was opened
+                const tab = composeSplitId() || activeTab();
+                setSplitThreads((prev) => {
+                  const existing = prev[tab] ?? [];
+                  const idx = existing.findIndex((t) => t.labelIds?.includes("DRAFT"));
+                  if (idx >= 0) {
+                    const next = [...existing];
+                    next[idx] = draftThread;
+                    return { ...prev, [tab]: next };
+                  }
+                  return { ...prev, [tab]: [draftThread, ...existing] };
+                });
+
+                // Also update in the drafts mailbox
+                setMailboxes((prev) => {
+                  const draftsBox = prev["drafts"] ?? { threads: [], loading: false };
+                  const existing = draftsBox.threads;
+                  const idx = existing.findIndex((t) => t.labelIds?.includes("DRAFT"));
+                  if (idx >= 0) {
+                    const next = [...existing];
+                    next[idx] = draftThread;
+                    return { ...prev, drafts: { ...draftsBox, threads: next } };
+                  }
+                  return { ...prev, drafts: { ...draftsBox, threads: [draftThread, ...existing] } };
+                });
+              }}
+            />
           </Show>
           }>
             {(mbId) => {
@@ -956,6 +1081,11 @@ export default function App() {
                   onOpenThread={(thread) => {
                     setSelectedId(thread.id);
                     setOpenThread({ id: thread.id, subject: thread.subject });
+                  }}
+                  onCompose={() => {
+                    const draft = lastDraftData();
+                    setActiveMailbox(null);
+                    openCompose(draft ?? undefined);
                   }}
                 />
               );
@@ -1056,6 +1186,7 @@ function MailboxView(props: {
   loading: boolean;
   onBack: () => void;
   onOpenThread: (thread: ThreadRow) => void;
+  onCompose?: () => void;
 }) {
   return (
     <div class="absolute inset-0 overflow-y-auto pt-3 pb-12">
@@ -1077,10 +1208,21 @@ function MailboxView(props: {
           {(thread) => (
             <div
               class="group flex items-center gap-3 px-20 py-2.5 cursor-pointer hover:bg-zinc-50"
-              onClick={() => props.onOpenThread(thread)}
+              onClick={() => {
+                if (thread.labelIds?.includes("DRAFT")) {
+                  props.onCompose?.();
+                  return;
+                }
+                props.onOpenThread(thread);
+              }}
             >
               <div class="w-40 flex-shrink-0 truncate">
-                <span class="text-[13px] text-zinc-500">{thread.fromName}</span>
+                <Show when={thread.labelIds?.includes("DRAFT")}>
+                  <span class="text-[13px] font-medium text-green-600 mr-1">Draft</span>
+                </Show>
+                <span class="text-[13px] text-zinc-500">
+                  {thread.labelIds?.includes("DRAFT") ? `to ${thread.fromName}` : thread.fromName}
+                </span>
               </div>
               <div class="flex-1 min-w-0 truncate">
                 <span class="text-[13px] text-zinc-400">{thread.subject}</span>

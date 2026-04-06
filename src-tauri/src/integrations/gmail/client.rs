@@ -109,6 +109,71 @@ impl GmailClient {
         self.post_json(&url, &body).await
     }
 
+    /// Create a new draft with a raw RFC 2822 message (base64url-encoded).
+    /// Returns the draft ID.
+    pub async fn create_draft(&self, raw: &str) -> Result<String, Error> {
+        let url = format!("{GMAIL_API}/drafts");
+        let body = serde_json::json!({
+            "message": { "raw": raw }
+        });
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.access_token)
+            .json(&body)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Error::Internal(format!("Gmail API {status}: {text}")));
+        }
+        #[derive(Deserialize)]
+        struct DraftResponse {
+            id: String,
+        }
+        let draft: DraftResponse = resp.json().await?;
+        Ok(draft.id)
+    }
+
+    /// Update an existing draft with a new raw RFC 2822 message (base64url-encoded).
+    pub async fn update_draft(&self, draft_id: &str, raw: &str) -> Result<(), Error> {
+        let url = format!("{GMAIL_API}/drafts/{draft_id}");
+        let body = serde_json::json!({
+            "message": { "raw": raw }
+        });
+        let resp = self
+            .http
+            .put(&url)
+            .bearer_auth(&self.access_token)
+            .json(&body)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Error::Internal(format!("Gmail API {status}: {text}")));
+        }
+        Ok(())
+    }
+
+    /// Delete a draft by ID.
+    pub async fn delete_draft(&self, draft_id: &str) -> Result<(), Error> {
+        let url = format!("{GMAIL_API}/drafts/{draft_id}");
+        let resp = self
+            .http
+            .delete(&url)
+            .bearer_auth(&self.access_token)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Error::Internal(format!("Gmail API {status}: {text}")));
+        }
+        Ok(())
+    }
+
     /// Fetch a raw message (RFC 2822) in base64url encoding.
     pub async fn get_message_raw(&self, message_id: &str) -> Result<String, Error> {
         let url = format!("{GMAIL_API}/messages/{message_id}?format=raw");

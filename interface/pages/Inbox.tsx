@@ -23,6 +23,7 @@ interface InboxProps {
   onSelect: (id: string) => void;
   onArchive: (threadId: string) => void;
   onTrash: (threadId: string) => void;
+  onCompose?: () => void;
 }
 
 export default function Inbox(props: InboxProps) {
@@ -42,16 +43,23 @@ export default function Inbox(props: InboxProps) {
                       : ""
                   }`}
                   onClick={() => {
+                    if (thread.labelIds?.includes("DRAFT")) {
+                      props.onCompose?.();
+                      return;
+                    }
                     props.onSelect(thread.id);
                     props.onOpenThread({ id: thread.id, subject: thread.subject });
                   }}
                 >
                   {/* Sender */}
                   <div class="w-40 flex-shrink-0 truncate">
+                    <Show when={thread.labelIds?.includes("DRAFT")}>
+                      <span class="text-[14px] font-medium text-green-600 mr-1">Draft</span>
+                    </Show>
                     <span class={`text-[14px] ${!thread.isRead ? "font-semibold text-zinc-900" : "text-zinc-500"}`}>
-                      {thread.fromName}
+                      {thread.labelIds?.includes("DRAFT") ? `to ${thread.fromName}` : thread.fromName}
                     </span>
-                    <Show when={thread.messageCount > 1}>
+                    <Show when={thread.messageCount > 1 && !thread.labelIds?.includes("DRAFT")}>
                       <span class="text-[12px] text-zinc-400 ml-1.5">{thread.messageCount}</span>
                     </Show>
                   </div>
