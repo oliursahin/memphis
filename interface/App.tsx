@@ -977,9 +977,9 @@ export default function App() {
 
         <div class="flex-1 relative overflow-hidden">
           <Show when={showSettings()} fallback={
+          <Show when={openThread()} fallback={
           <Show when={activeMailbox()} fallback={
           <Show when={showCompose()} fallback={
-            <Show when={openThread()} fallback={
               <Inbox
                 threads={threads()}
                 loading={loadingInbox()}
@@ -993,19 +993,6 @@ export default function App() {
                   openCompose(draft ?? undefined);
                 }}
               />
-            }>
-              {(thread) => (
-                <ThreadView
-                  threadId={thread().id}
-                  subject={thread().subject}
-                  onBack={() => { setOpenThread(null); setInlineReply(false); setReplyAll(false); }}
-                  replyOpen={inlineReply()}
-                  replyAll={replyAll()}
-                  onReplyOpen={() => setInlineReply(true)}
-                  onReplyClose={() => { setInlineReply(false); setReplyAll(false); }}
-                />
-              )}
-            </Show>
           }>
             <ComposeView
               onClose={() => {
@@ -1101,6 +1088,19 @@ export default function App() {
                 />
               );
             }}
+          </Show>
+          }>
+            {(thread) => (
+              <ThreadView
+                threadId={thread().id}
+                subject={thread().subject}
+                onBack={() => { setOpenThread(null); setInlineReply(false); setReplyAll(false); }}
+                replyOpen={inlineReply()}
+                replyAll={replyAll()}
+                onReplyOpen={() => setInlineReply(true)}
+                onReplyClose={() => { setInlineReply(false); setReplyAll(false); }}
+              />
+            )}
           </Show>
           }>
             <Settings
