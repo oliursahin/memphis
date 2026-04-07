@@ -720,15 +720,11 @@ export default function App() {
     if (e.ctrlKey && e.key >= "1" && e.key <= "9") {
       const idx = parseInt(e.key) - 1;
       const accs = accounts();
-      if (idx < accs.length) {
+      const target = accs[idx];
+      if (target && target.id !== activeAccountId()) {
         e.preventDefault();
-        const target = idx === 0
-          ? accs.find((a) => a.id === activeAccountId()) ?? accs[0]
-          : accs.filter((a) => a.id !== activeAccountId())[idx - 1];
-        if (target && target.id !== activeAccountId()) {
-          switchAccount(target.id);
-          setShowAccountPicker(false);
-        }
+        switchAccount(target.id);
+        setShowAccountPicker(false);
       }
       return;
     }
