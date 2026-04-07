@@ -867,7 +867,7 @@ export default function App() {
       <Show when={updateAvailable()}>
         {(update) => (
           <div class="absolute top-0 left-0 right-0 z-50 flex items-center justify-center gap-3 bg-black text-white text-[13px] py-2 px-4">
-            <span>Memphis {update().version} is available</span>
+            <span>Morphis {update().version} is available</span>
             <button
               onClick={() => update().install()}
               disabled={updateInstalling()}

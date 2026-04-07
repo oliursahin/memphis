@@ -25,7 +25,7 @@ export default function Onboarding(props: OnboardingProps) {
   return (
     <div class="h-screen w-screen bg-white flex items-center justify-center" data-tauri-drag-region>
       <div class="text-center max-w-sm">
-        <h1 class="text-[22px] font-semibold text-zinc-900">memphis</h1>
+        <h1 class="text-[22px] font-semibold text-zinc-900">morphis</h1>
         <p class="text-[14px] text-zinc-400 mt-2">the email client you deserve.</p>
 
         <button
@@ -47,7 +47,7 @@ export default function Onboarding(props: OnboardingProps) {
         )}
 
         <p class="text-[11px] text-zinc-300 mt-6">
-          your data stays on this device. memphis never touches a server.
+          your data stays on this device. morphis never touches a server.
         </p>
       </div>
     </div>

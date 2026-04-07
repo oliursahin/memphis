@@ -22,7 +22,7 @@ yarn-error.log*
 .env*
 
 # signing key (private)
-memphis.key
+morphis.key
 
 # typescript
 *.tsbuildinfo

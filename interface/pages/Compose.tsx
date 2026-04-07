@@ -42,7 +42,7 @@ export default function ComposeView(props: ComposeViewProps) {
   const [sending, setSending] = createSignal(false);
   const [sendError, setSendError] = createSignal<string | null>(null);
   const [showSignature, setShowSignature] = createSignal(false);
-  const [signature, setSignature] = createSignal("Sent with Memphis · morphism.me");
+  const [signature, setSignature] = createSignal("Sent with Morphis · morphism.me");
   const [signatureEnabled, setSignatureEnabled] = createSignal(true);
   const [toolbarPos, setToolbarPos] = createSignal<{ x: number; y: number } | null>(null);
   const [showLinkInput, setShowLinkInput] = createSignal(false);
