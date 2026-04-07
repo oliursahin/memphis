@@ -755,9 +755,10 @@ export default function App() {
         }
       }
       if (allEntries.length === 0) return;
-      const currentIdx = allEntries.findIndex(
+      const rawIdx = allEntries.findIndex(
         (entry) => entry.accountId === activeAccountId() && entry.splitId === activeTab()
       );
+      const currentIdx = rawIdx === -1 ? 0 : rawIdx;
       const nextIdx = e.shiftKey
         ? (currentIdx - 1 + allEntries.length) % allEntries.length
         : (currentIdx + 1) % allEntries.length;
