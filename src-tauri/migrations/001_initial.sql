@@ -1,4 +1,4 @@
--- Memphis: Initial schema
+-- Morphis: Initial schema
 
 CREATE TABLE accounts (
     id TEXT PRIMARY KEY,

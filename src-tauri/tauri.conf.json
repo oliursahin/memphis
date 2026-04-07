@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "memphis",
+  "productName": "morphis",
   "version": "0.1.1",
-  "identifier": "cat.march.memphis",
+  "identifier": "cat.march.morphis",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "memphis",
+        "title": "morphis",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
@@ -43,7 +43,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlFOTQzRDI4RTdGRDMyNEQKUldSTk12M25LRDJVbnRRR041VGR3T0hzeTZNQzhoOVhMaWhpS1Q4b1BtRGFmS2hEY2hpYmNJazIK",
       "endpoints": [
-        "https://github.com/oliursahin/memphis/releases/latest/download/latest.json"
+        "https://github.com/oliursahin/morphis/releases/latest/download/latest.json"
       ]
     }
   }

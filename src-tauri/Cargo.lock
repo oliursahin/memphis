@@ -2533,7 +2533,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "memphis"
+name = "morphis"
 version = "0.1.0"
 dependencies = [
  "ammonia",

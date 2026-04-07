@@ -135,7 +135,7 @@ pub fn wait_for_callback(port: u16) -> Result<String, Error> {
 
     // Respond with a success page
     let response = tiny_http::Response::from_string(
-        "<html><body style='font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;color:#333'><div style='text-align:center'><h2>Connected!</h2><p>You can close this tab and return to Memphis.</p></div></body></html>"
+        "<html><body style='font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;color:#333'><div style='text-align:center'><h2>Connected!</h2><p>You can close this tab and return to Morphis.</p></div></body></html>"
     ).with_header("Content-Type: text/html".parse::<tiny_http::Header>().unwrap());
 
     let _ = request.respond(response);

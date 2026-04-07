@@ -40,7 +40,7 @@ export default function ThreadView(props: ThreadViewProps) {
   const [sending, setSending] = createSignal(false);
   const [sendError, setSendError] = createSignal<string | null>(null);
   const [showSignature, setShowSignature] = createSignal(false);
-  const [signature, setSignature] = createSignal("Sent with Memphis · morphism.me");
+  const [signature, setSignature] = createSignal("Sent with Morphis · morphism.me");
   const [signatureEnabled, setSignatureEnabled] = createSignal(true);
   let threadContentRef: HTMLDivElement | undefined;
 
