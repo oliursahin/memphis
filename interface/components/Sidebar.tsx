@@ -51,8 +51,8 @@ export default function Sidebar(props: SidebarProps) {
 
       <div class="flex-1 w-full flex flex-col overflow-y-auto">
 
-        {/* ── Scratchpad ── */}
-        <div
+        {/* ── Scratchpad (commented out) ── */}
+        {/* <div
           onClick={() => { props.onOpenMailbox("drafts"); setMenuOpenFor(null); }}
           class={`px-10 py-1.5 pb-3 cursor-pointer text-[13px] font-medium ${
             props.activeMailbox() === "drafts"
@@ -61,6 +61,15 @@ export default function Sidebar(props: SidebarProps) {
           }`}
         >
           Scratchpad
+        </div> */}
+
+        {/* ── Morphis ── */}
+        <div
+          class={`px-10 py-1.5 pb-3 text-[13px] font-medium ${
+            iz() ? "text-white/50" : "text-zinc-500"
+          }`}
+        >
+          Morphis
         </div>
 
         {/* ── Thin line ── */}
