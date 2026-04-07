@@ -92,7 +92,7 @@ export default function SearchOverlay(props: SearchOverlayProps) {
             onKeyDown={handleKeyDown}
             class="flex-1 bg-transparent text-[14px] text-black/80 outline-none placeholder:text-black/40"
             placeholder="Search all emails..."
-            autofocus
+            ref={(el) => setTimeout(() => el.focus(), 0)}
           />
           <kbd class="text-[10px] text-black/30 bg-black/[0.04] border border-black/[0.06] px-1.5 py-0.5 rounded-md font-mono">Esc</kbd>
         </div>

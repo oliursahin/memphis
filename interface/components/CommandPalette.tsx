@@ -248,7 +248,7 @@ export default function CommandBar(props: CommandBarProps) {
             onKeyDown={handleKeyDown}
             class="flex-1 bg-transparent text-[14px] text-black/80 outline-none placeholder:text-black/40"
             placeholder="Type a command or search..."
-            autofocus
+            ref={(el) => setTimeout(() => el.focus(), 0)}
           />
         </div>
 

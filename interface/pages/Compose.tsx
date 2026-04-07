@@ -286,7 +286,7 @@ export default function ComposeView(props: ComposeViewProps) {
                 onInput={(e) => { setTo(e.currentTarget.value); scheduleSave(); }}
                 class="flex-1 text-[14px] text-zinc-800 bg-transparent outline-none placeholder:text-zinc-400"
                 placeholder="To"
-                autofocus
+                ref={(el) => setTimeout(() => el.focus(), 0)}
               />
               <button
                 onClick={() => setShowCc(!showCc())}

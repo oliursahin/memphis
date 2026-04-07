@@ -21,6 +21,9 @@ yarn-error.log*
 # env files
 .env*
 
+# signing key (private)
+memphis.key
+
 # typescript
 *.tsbuildinfo
 

@@ -1,6 +1,8 @@
 import { createSignal, createMemo, onMount, onCleanup, For, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import ThreadView from "./pages/Thread";
 import ComposeView from "./pages/Compose";
 import SearchPalette from "./components/SearchPalette";
@@ -103,6 +105,10 @@ export default function App() {
   const [replyAll, setReplyAll] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
   const [showAccountPicker, setShowAccountPicker] = createSignal(false);
+
+  // Auto-update state
+  const [updateAvailable, setUpdateAvailable] = createSignal<{ version: string; install: () => Promise<void> } | null>(null);
+  const [updateInstalling, setUpdateInstalling] = createSignal(false);
 
   // Inbox-zero background from Unsplash (cached once per day in localStorage)
   const [inboxZeroPhoto, setInboxZeroPhoto] = createSignal<InboxZeroPhoto | null>(null);
@@ -800,6 +806,20 @@ export default function App() {
     checkAuth();
     document.addEventListener("keydown", handleKeyDown);
 
+    // Check for app updates
+    check().then((update) => {
+      if (update) {
+        setUpdateAvailable({
+          version: update.version,
+          install: async () => {
+            setUpdateInstalling(true);
+            await update.downloadAndInstall();
+            await relaunch();
+          },
+        });
+      }
+    }).catch(console.error);
+
     // Listen for background sync events from the Rust backend.
     // Debounce to avoid overlapping refetches when events arrive in quick succession.
     let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -847,6 +867,22 @@ export default function App() {
       />
     }>
     <div class="h-screen w-screen text-zinc-900 flex overflow-hidden relative">
+      {/* ── Update banner ── */}
+      <Show when={updateAvailable()}>
+        {(update) => (
+          <div class="absolute top-0 left-0 right-0 z-50 flex items-center justify-center gap-3 bg-black text-white text-[13px] py-2 px-4">
+            <span>Memphis {update().version} is available</span>
+            <button
+              onClick={() => update().install()}
+              disabled={updateInstalling()}
+              class="bg-white text-black px-3 py-0.5 rounded-md text-[12px] font-medium hover:bg-white/90 disabled:opacity-50"
+            >
+              {updateInstalling() ? "Installing…" : "Update & restart"}
+            </button>
+          </div>
+        )}
+      </Show>
+
       {/* ── Inbox-zero full-bleed background ── */}
       <Show when={isInboxZero() && inboxZeroPhoto()}>
         <img
