@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod calendar;
 pub mod compose;
 pub mod inbox;
 pub mod labels;
