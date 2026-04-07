@@ -197,139 +197,56 @@ export default function ThreadView(props: ThreadViewProps) {
 
   return (
     <div class="h-full flex flex-col bg-white">
-      {/* Actions row */}
-      <div class="flex-shrink-0 px-20 pt-0 pb-2">
-        <div class="flex items-center mb-3">
-          <button
-            onClick={props.onBack}
-            class="p-1 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10 12L6 8l4-4" />
-            </svg>
-          </button>
-          <div class="flex-1" />
-          <div class="flex items-center gap-1">
-            <button class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Print">
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 6V2h8v4" /><rect x="2" y="6" width="12" height="6" rx="1" /><path d="M4 12v2h8v-2" />
-              </svg>
-            </button>
-            <button class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Mark as unread">
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="3" width="12" height="10" rx="1.5" />
-              </svg>
-            </button>
-            <button class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Add label">
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M2 4a1 1 0 011-1h4.586a1 1 0 01.707.293l5.414 5.414a1 1 0 010 1.414l-3.586 3.586a1 1 0 01-1.414 0L3.293 8.293A1 1 0 013 7.586V4z" />
-                <circle cx="5.5" cy="5.5" r="1" fill="currentColor" />
-              </svg>
-            </button>
-            <button class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="More">
-              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="3" cy="8" r="1" fill="currentColor" />
-                <circle cx="8" cy="8" r="1" fill="currentColor" />
-                <circle cx="13" cy="8" r="1" fill="currentColor" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
+      {/* Thread content — subject + messages scrollable together */}
+      <div ref={threadContentRef} class={`overflow-y-auto px-20 flex-1 min-h-0`}>
         {/* Subject */}
-        <h1 class="text-[20px] font-semibold text-zinc-900 leading-tight">
+        <h1 class="text-[20px] font-semibold text-zinc-900 leading-tight pt-4 pb-2">
           {props.subject}
         </h1>
-
-        {/* Guide hint */}
-        <div class="mt-2 mb-2 flex items-center gap-3 opacity-60">
-          <span class="text-[12px] text-zinc-400">
-            Hit <kbd class="px-1 py-0.5 rounded bg-zinc-100 text-[11px] font-mono text-zinc-500">R</kbd> to reply
-          </span>
-          <span class="text-[12px] text-zinc-400">
-            <kbd class="px-1 py-0.5 rounded bg-zinc-100 text-[11px] font-mono text-zinc-500">E</kbd> archive
-          </span>
-          <span class="text-[12px] text-zinc-400">
-            <kbd class="px-1 py-0.5 rounded bg-zinc-100 text-[11px] font-mono text-zinc-500">Esc</kbd> back
-          </span>
-        </div>
+        <Show when={!loading()} fallback={
+          <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading messages...</div>
+        }>
+          <Show when={!error()} fallback={
+            <div class="flex items-center justify-center h-32 text-[13px] text-red-500">{error()}</div>
+          }>
+            <div class="space-y-5 pb-12">
+              <For each={messages()}>
+                {(msg) => (
+                  <MessageBubble
+                    message={msg}
+                    isCollapsed={collapsed().has(msg.id)}
+                    onToggle={() => toggleCollapse(msg.id)}
+                  />
+                )}
+              </For>
+            </div>
+          </Show>
+        </Show>
       </div>
 
-      {/* Thread content + reply wrapped together when reply is open */}
-      <Show when={props.replyOpen} fallback={
-        <div ref={threadContentRef} class="overflow-y-auto px-20 flex-1">
-          <Show when={!loading()} fallback={
-            <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading messages...</div>
-          }>
-            <Show when={!error()} fallback={
-              <div class="flex items-center justify-center h-32 text-[13px] text-red-500">{error()}</div>
-            }>
-              <div class="space-y-5 pb-4">
-                <For each={messages()}>
-                  {(msg) => (
-                    <MessageBubble
-                      message={msg}
-                      isCollapsed={collapsed().has(msg.id)}
-                      onToggle={() => toggleCollapse(msg.id)}
-                    />
-                  )}
-                </For>
-              </div>
-            </Show>
-          </Show>
-        </div>
-      }>
-        <div class="flex-1 min-h-0 flex flex-col mx-20 border border-zinc-200 rounded-lg">
-          {/* Thread content — scrollable, shrinks when reply is open */}
-          <div
-            ref={threadContentRef}
-            class="overflow-y-auto px-5 flex-shrink-0"
-            style={{ "max-height": "200px" }}
+      {/* Reply area — bordered box at bottom */}
+      <Show when={props.replyOpen && lastMsg()}>
+        <div class="flex-1 min-h-0 flex flex-col border-t border-b border-zinc-200 relative">
+          {/* Close button — top right */}
+          <button
+            onClick={() => {
+              setReplyBody("");
+              setReplyCc("");
+              setReplyBcc("");
+              setShowCcBcc(false);
+              props.onReplyClose?.();
+            }}
+            class="absolute top-3 right-4 text-zinc-400 hover:text-zinc-600 transition-colors p-0.5"
+            title="Discard reply"
           >
-            <Show when={!loading()} fallback={
-              <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading messages...</div>
-            }>
-              <Show when={!error()} fallback={
-                <div class="flex items-center justify-center h-32 text-[13px] text-red-500">{error()}</div>
-              }>
-                <div class="space-y-5 pb-4 pt-4">
-                  <For each={messages()}>
-                    {(msg) => (
-                      <MessageBubble
-                        message={msg}
-                        isCollapsed={collapsed().has(msg.id)}
-                        onToggle={() => toggleCollapse(msg.id)}
-                      />
-                    )}
-                  </For>
-                </div>
-              </Show>
-            </Show>
-          </div>
-
-          {/* Reply area */}
-          <Show when={lastMsg()}>
-            <div class="flex-1 min-h-0 flex flex-col">
-              <div class="flex-1 min-h-0 flex flex-col px-5 py-4">
-                {/* Reply header with To field and expand chevron for CC/BCC */}
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
+          </button>
+          <div class="flex-1 min-h-0 flex flex-col px-20 py-4">
+            {/* Reply header with To field */}
             <div class="flex-shrink-0 space-y-2 mb-3">
-              {/* To row */}
               <div class="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setReplyBody("");
-                    setReplyCc("");
-                    setReplyBcc("");
-                    setShowCcBcc(false);
-                    props.onReplyClose?.();
-                  }}
-                  class="text-zinc-400 hover:text-zinc-600 transition-colors p-0.5 flex-shrink-0"
-                  title="Discard reply"
-                >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M4 4l8 8M12 4l-8 8" />
-                  </svg>
-                </button>
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-zinc-400 flex-shrink-0">
                   <path d="M6 12L2 8l4-4" />
                   <path d="M2 8h9a3 3 0 013 3v1" />
@@ -358,7 +275,6 @@ export default function ThreadView(props: ThreadViewProps) {
                 </button>
               </div>
 
-              {/* CC/BCC rows — expandable */}
               <Show when={showCcBcc()}>
                 <div class="flex items-center gap-2">
                   <div class="w-[14px] flex-shrink-0" />
@@ -385,7 +301,7 @@ export default function ThreadView(props: ThreadViewProps) {
               </Show>
             </div>
 
-            {/* Textarea — grows to fill space */}
+            {/* Textarea */}
             <div class="flex-1 min-h-0 relative">
               <textarea
                 ref={(el) => setTimeout(() => el.focus(), 0)}
@@ -469,9 +385,7 @@ export default function ThreadView(props: ThreadViewProps) {
                 </button>
               </div>
             </div>
-              </div>
-            </div>
-          </Show>
+          </div>
         </div>
       </Show>
 
@@ -513,8 +427,8 @@ function MessageBubble(props: { message: Message; isCollapsed: boolean; onToggle
       >
         <div class="flex items-center gap-2">
           <span class="text-[13px] font-semibold text-zinc-700 flex-shrink-0">{msg().fromName}</span>
-          <span class="text-[12px] text-zinc-400 truncate flex-1">{plainPreview()}</span>
-          <span class="text-[12px] text-zinc-400 flex-shrink-0">{msg().date}</span>
+          <span class="text-[12px] text-zinc-500 truncate flex-1">{plainPreview()}</span>
+          <span class="text-[12px] text-zinc-500 flex-shrink-0">{msg().date}</span>
         </div>
       </div>
     }>
@@ -522,14 +436,14 @@ function MessageBubble(props: { message: Message; isCollapsed: boolean; onToggle
         {/* Sender row */}
         <div class="flex items-baseline gap-2 cursor-pointer" onClick={props.onToggle}>
           <span class="text-[14px] font-semibold text-zinc-900">{msg().fromName}</span>
-          <span class="text-[13px] text-zinc-400">{msg().fromEmail}</span>
+          <span class="text-[13px] text-zinc-500">{msg().fromEmail}</span>
           <div class="flex-1" />
-          <span class="text-[12px] text-zinc-400 flex-shrink-0">{msg().date}</span>
+          <span class="text-[12px] text-zinc-500 flex-shrink-0">{msg().date}</span>
         </div>
 
         {/* To line */}
         <div class="mt-0.5 flex items-center gap-1">
-          <span class="text-[12px] text-zinc-400">To {toShort()}</span>
+          <span class="text-[12px] text-zinc-500">To {toShort()}</span>
           <button
             onClick={(e) => { e.stopPropagation(); setDetailsOpen((v) => !v); }}
             class="text-zinc-400 hover:text-zinc-600 transition-colors p-0.5"
@@ -547,7 +461,7 @@ function MessageBubble(props: { message: Message; isCollapsed: boolean; onToggle
 
         {/* Expanded details */}
         <Show when={detailsOpen()}>
-          <div class="mt-1.5 pl-0 space-y-0.5 text-[12px] text-zinc-400">
+          <div class="mt-1.5 pl-0 space-y-0.5 text-[12px] text-zinc-500">
             <div>
               <span class="text-zinc-500 font-medium">From: </span>
               {msg().fromName} &lt;{msg().fromEmail}&gt;
