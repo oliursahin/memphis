@@ -69,7 +69,7 @@ export default function Sidebar(props: SidebarProps) {
             iz() ? "text-white/50" : "text-zinc-500"
           }`}
         >
-          Morphis
+          morphis
         </div>
 
         {/* ── Thin line ── */}

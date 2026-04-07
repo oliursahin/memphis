@@ -530,6 +530,7 @@ export default function App() {
     const tab = activeTab();
     setComposeSplitId(tab);
     setComposeInitial(opts ?? null);
+    setOpenThread(null);
     setShowCompose(true);
 
     // Insert placeholder draft entry into the split right now
