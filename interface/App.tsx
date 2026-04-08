@@ -790,7 +790,7 @@ export default function App() {
       if (e.key === "!" || e.key in nav) {
         e.preventDefault();
         if (e.key === "!") { openMailbox("spam"); }
-        else if (nav[e.key] === null) { setActiveMailbox(null); }
+        else if (nav[e.key] === null) { closeAllViews(); setActiveMailbox(null); }
         else { openMailbox(nav[e.key]!); }
         return;
       }
