@@ -35,7 +35,7 @@ const FAILURE_COOLDOWN_SECS: u64 = 30;
 
 const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const SCOPES: &str = "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify";
+const SCOPES: &str = "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.events.readonly";
 
 pub struct OAuthConfig {
     pub client_id: String,
@@ -88,6 +88,8 @@ pub fn build_auth_url(config: &OAuthConfig) -> Result<(String, u16, String), Err
         urlencoding::encode(&challenge),
         urlencoding::encode(&state),
     );
+
+    log::info!("OAuth URL scopes requested: {SCOPES}");
 
     Ok((auth_url, port, verifier))
 }
@@ -172,6 +174,10 @@ pub async fn exchange_code(
     }
 
     let token: TokenResponse = resp.json().await?;
+    log::info!(
+        "OAuth token exchange — granted scopes: {}",
+        token.scope.as_deref().unwrap_or("<none returned>")
+    );
     Ok(token)
 }
 
@@ -232,6 +238,8 @@ pub fn save_account(
         rusqlite::params![account_id, user_info.email, user_info.name, user_info.picture],
     )?;
 
+    // Store the scopes actually granted by Google (falls back to what we requested)
+    let granted_scopes = tokens.scope.as_deref().unwrap_or(SCOPES);
     conn.execute(
         "INSERT OR REPLACE INTO oauth_tokens (account_id, access_token, refresh_token, expires_at, scope)
          VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -240,7 +248,7 @@ pub fn save_account(
             tokens.access_token,
             tokens.refresh_token.as_deref().unwrap_or(""),
             expires_at,
-            SCOPES,
+            granted_scopes,
         ],
     )?;
 
@@ -351,12 +359,22 @@ pub async fn get_valid_token(
     }
 }
 
+/// Evict cached token and failure state for an account.
+/// Call this after re-auth so the sync engine uses the fresh token.
+pub async fn clear_token_cache(account_id: &str) {
+    let mut cache = TOKEN_CACHE.lock().await;
+    cache.tokens.remove(account_id);
+    cache.failures.remove(account_id);
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_in: Option<u64>,
     pub token_type: Option<String>,
+    /// Scopes actually granted by Google (may differ from what was requested).
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]

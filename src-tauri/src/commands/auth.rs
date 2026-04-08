@@ -5,6 +5,7 @@ use crate::error::Error;
 use crate::integrations::gmail::oauth::{self, OAuthConfig};
 use crate::models::account::Account;
 use crate::state::AppState;
+use crate::sync::engine::clear_calendar_denied;
 
 #[tauri::command]
 pub async fn start_oauth_flow(state: State<'_, AppState>) -> Result<(), Error> {
@@ -27,18 +28,70 @@ pub async fn start_oauth_flow(state: State<'_, AppState>) -> Result<(), Error> {
     // Get user info
     let user_info = oauth::get_user_info(&tokens.access_token).await?;
 
-    let account_id = Uuid::new_v4().to_string();
     let expires_at = chrono::Utc::now()
         + chrono::Duration::seconds(tokens.expires_in.unwrap_or(3600) as i64);
     let expires_str = expires_at.to_rfc3339();
 
-    // Save to DB
+    // Check if an account with this email already exists (re-auth scenario)
+    let existing_account_id: Option<String> = {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        conn.query_row(
+            "SELECT id FROM accounts WHERE email = ?1 AND is_active = 1",
+            rusqlite::params![user_info.email],
+            |row| row.get(0),
+        )
+        .ok()
+    };
+
+    let account_id = existing_account_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    // Save to DB (upserts account + tokens)
     {
         let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
         oauth::save_account(&conn, &account_id, &user_info, &tokens, &expires_str)?;
     }
 
-    log::info!("Account created: {} ({})", user_info.email, account_id);
+    // Clear stale in-memory caches so the new token (with updated scopes) is used
+    oauth::clear_token_cache(&account_id).await;
+    clear_calendar_denied(&account_id).await;
+
+    log::info!("Account saved: {} ({})", user_info.email, account_id);
+    Ok(())
+}
+
+/// Re-authenticate an existing account to update OAuth scopes (e.g., add calendar access).
+/// Preserves the account ID and sync state — only refreshes the tokens.
+#[tauri::command]
+pub async fn reauth_account(state: State<'_, AppState>, account_id: String) -> Result<(), Error> {
+    let config = OAuthConfig::from_env()?;
+    let (auth_url, port, verifier) = oauth::build_auth_url(&config)?;
+
+    open::that(&auth_url)
+        .map_err(|e| Error::Internal(format!("Failed to open browser: {e}")))?;
+
+    let code = tokio::task::spawn_blocking(move || oauth::wait_for_callback(port))
+        .await
+        .map_err(|e| Error::Internal(format!("spawn_blocking: {e}")))?
+        ?;
+
+    let tokens = oauth::exchange_code(&config, &code, &verifier, port).await?;
+    let user_info = oauth::get_user_info(&tokens.access_token).await?;
+
+    let expires_at = chrono::Utc::now()
+        + chrono::Duration::seconds(tokens.expires_in.unwrap_or(3600) as i64);
+    let expires_str = expires_at.to_rfc3339();
+
+    // Update tokens for the existing account (preserves sync_state)
+    {
+        let conn = state.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+        oauth::save_account(&conn, &account_id, &user_info, &tokens, &expires_str)?;
+    }
+
+    // Clear stale in-memory caches so sync engine uses the fresh token
+    oauth::clear_token_cache(&account_id).await;
+    clear_calendar_denied(&account_id).await;
+
+    log::info!("Re-authenticated account {} ({})", user_info.email, account_id);
     Ok(())
 }
 

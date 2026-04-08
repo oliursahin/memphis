@@ -7,6 +7,7 @@ mod models;
 mod search;
 mod state;
 mod sync;
+mod tray;
 
 use tauri::Manager;
 
@@ -52,6 +53,9 @@ pub fn run() {
             let sync_stop = state.sync_stop.clone();
             app.manage(state);
 
+            // Set up tray icon and menubar calendar popup
+            tray::setup_tray(app)?;
+
             // Spawn background sync engine
             let sync_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -64,6 +68,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::auth::start_oauth_flow,
+            commands::auth::reauth_account,
             commands::auth::get_accounts,
             commands::auth::has_accounts,
             commands::auth::disconnect_account,
@@ -93,6 +98,8 @@ pub fn run() {
             commands::settings::get_setting,
             commands::sync::trigger_sync,
             commands::unsplash::get_inbox_zero_photo,
+            commands::calendar::get_upcoming_events,
+            commands::calendar::get_next_event,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

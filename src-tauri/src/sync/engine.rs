@@ -1,18 +1,29 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
+use crate::db::calendar_events::{self, CalendarEventRow};
 use crate::db::threads::{upsert_thread, delete_cached_thread, mark_calendar_threads};
 use crate::error::Error;
+use crate::integrations::calendar::client::CalendarClient;
 use crate::integrations::gmail::client::GmailClient;
 use crate::integrations::gmail::mapper::map_gmail_thread;
 use crate::integrations::gmail::oauth;
 use crate::integrations::gmail::sync as gmail_sync;
+
+/// Accounts that got a 403 for Calendar API, with timestamp.
+/// Suppresses retries for 5 minutes, then auto-retries (handles API propagation delays).
+static CALENDAR_SCOPE_DENIED: std::sync::LazyLock<tokio::sync::Mutex<HashMap<String, Instant>>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(HashMap::new()));
+
+/// How long to suppress calendar retries after a 403.
+const CALENDAR_DENY_COOLDOWN_SECS: u64 = 300;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +40,24 @@ enum AccountSyncResult {
     InitialComplete(Vec<String>),
 }
 
+/// Clear the calendar-scope-denied flag for an account after re-auth.
+pub async fn clear_calendar_denied(account_id: &str) {
+    CALENDAR_SCOPE_DENIED.lock().await.remove(account_id);
+}
+
+/// Check if calendar is suppressed for an account (returns true if still in cooldown).
+async fn is_calendar_suppressed(account_id: &str) -> bool {
+    let mut denied = CALENDAR_SCOPE_DENIED.lock().await;
+    if let Some(denied_at) = denied.get(account_id) {
+        if denied_at.elapsed().as_secs() < CALENDAR_DENY_COOLDOWN_SECS {
+            return true;
+        }
+        // Cooldown expired — remove and allow retry
+        denied.remove(account_id);
+    }
+    false
+}
+
 pub struct SyncEngine {
     app_handle: tauri::AppHandle,
     db: Arc<Mutex<Connection>>,
@@ -42,6 +71,12 @@ impl SyncEngine {
         stop_flag: Arc<AtomicBool>,
     ) -> Self {
         Self { app_handle, db, stop_flag }
+    }
+
+    /// Mark an account as having failed calendar auth — retry after cooldown.
+    async fn suppress_calendar(&self, account_id: &str) {
+        CALENDAR_SCOPE_DENIED.lock().await.insert(account_id.to_string(), Instant::now());
+        let _ = self.app_handle.emit("calendar:needs_reauth", account_id);
     }
 
     /// Run the background poll loop. Blocks until stop_flag is set.
@@ -131,6 +166,13 @@ impl SyncEngine {
                 Err(e) => {
                     log::warn!("Sync failed for account {account_id}: {e}");
                 }
+            }
+
+            // Sync calendar events (piggyback on every cycle)
+            match self.sync_calendar_events(account_id).await {
+                Ok(true) => any_calendar_changed = true,
+                Ok(false) => {}
+                Err(e) => log::warn!("Calendar sync failed for {account_id}: {e}"),
             }
         }
 
@@ -325,6 +367,125 @@ impl SyncEngine {
         mark_calendar_threads(&conn, account_id, &calendar_ids)?;
 
         Ok(current_ids != new_ids)
+    }
+
+    /// Sync calendar events from Google Calendar API for an account.
+    /// Fetches events for the next 7 days and upserts them into SQLite.
+    /// Returns true if any events were synced.
+    async fn sync_calendar_events(&self, account_id: &str) -> Result<bool, Error> {
+        // Skip if recently denied (retries automatically after 5-min cooldown)
+        if is_calendar_suppressed(account_id).await {
+            return Ok(false);
+        }
+
+        let token = match oauth::get_valid_token(&self.db, account_id).await {
+            Ok(t) => t,
+            Err(e) => {
+                let msg = format!("{e}");
+                if msg.contains("403") || msg.contains("Calendar API") {
+                    self.suppress_calendar(account_id).await;
+                    return Ok(false);
+                }
+                return Err(e);
+            }
+        };
+
+        let client = CalendarClient::new(token);
+
+        // Fetch calendars, then events from each
+        let calendars = match client.list_calendars().await {
+            Ok(c) => c,
+            Err(Error::Auth(ref msg)) => {
+                log::warn!("Calendar API 403 for {account_id} — suppressing until re-auth. \
+                    Ensure Google Calendar API is enabled in Cloud Console. Detail: {msg}");
+                self.suppress_calendar(account_id).await;
+                return Ok(false);
+            }
+            Err(e) => return Err(e),
+        };
+
+        let now = chrono::Utc::now();
+        let time_min = now.to_rfc3339();
+        let time_max = (now + chrono::Duration::days(7)).to_rfc3339();
+
+        // Clean up old events
+        {
+            let conn = self.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+            let yesterday = (now - chrono::Duration::days(1)).to_rfc3339();
+            let _ = calendar_events::delete_stale_events(&conn, account_id, &yesterday);
+        }
+
+        let mut count = 0usize;
+        for cal in &calendars {
+            let events = match client.list_events(&cal.id, &time_min, &time_max, 250).await {
+                Ok(e) => e,
+                Err(e) => {
+                    log::warn!("Failed to fetch events for calendar {}: {e}", cal.id);
+                    continue;
+                }
+            };
+
+            let conn = self.db.lock().map_err(|e| Error::Internal(format!("DB lock: {e}")))?;
+            for event in &events {
+                // Skip cancelled events
+                if event.status.as_deref() == Some("cancelled") {
+                    continue;
+                }
+
+                let (start_time, end_time, is_all_day) = match (&event.start, &event.end) {
+                    (Some(s), Some(e)) => {
+                        if let (Some(st), Some(et)) = (&s.date_time, &e.date_time) {
+                            (st.clone(), et.clone(), false)
+                        } else if let (Some(sd), Some(ed)) = (&s.date, &e.date) {
+                            // All-day events: store as T00:00:00 UTC
+                            (format!("{sd}T00:00:00Z"), format!("{ed}T00:00:00Z"), true)
+                        } else {
+                            continue;
+                        }
+                    }
+                    _ => continue,
+                };
+
+                let attendees_json = event.attendees.as_ref().map(|att| {
+                    serde_json::to_string(
+                        &att.iter()
+                            .filter_map(|a| a.email.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap_or_else(|_| "[]".to_string())
+                });
+
+                let row = CalendarEventRow {
+                    id: format!("{}_{}", account_id, event.id),
+                    account_id: account_id.to_string(),
+                    provider_event_id: event.id.clone(),
+                    calendar_id: cal.id.clone(),
+                    calendar_name: cal.summary.clone(),
+                    title: event.summary.clone().unwrap_or_default(),
+                    start_time,
+                    end_time,
+                    location: event.location.clone(),
+                    description: event.description.clone(),
+                    status: event.status.clone(),
+                    color: cal.background_color.clone(),
+                    organizer_email: event.organizer.as_ref().and_then(|o| o.email.clone()),
+                    attendees: attendees_json,
+                    is_all_day,
+                };
+
+                if let Err(e) = calendar_events::upsert_event(&conn, &row) {
+                    log::warn!("Failed to upsert calendar event {}: {e}", event.id);
+                }
+                count += 1;
+            }
+        }
+
+        if count > 0 {
+            log::info!("Calendar sync: upserted {count} events for {account_id}");
+            let _ = self.app_handle.emit("calendar:events_updated", account_id);
+        }
+
+        Ok(count > 0)
     }
 
     /// Send native OS notifications for newly arrived inbox threads.
