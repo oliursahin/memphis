@@ -220,6 +220,7 @@ export default function Sidebar(props: SidebarProps) {
           }`}
         >
           <span>Settings</span>
+          <kbd class={`text-[10px] font-mono ${iz() ? "text-white/25" : "text-zinc-400"}`}>G S</kbd>
         </div>
       </div>
     </aside>
