@@ -967,7 +967,6 @@ export default function App() {
           activeAccount={activeAccount}
           avatarFailed={avatarFailed}
           onAvatarError={() => setAvatarFailed(true)}
-          onSwitchAccount={switchAccount}
           splits={splits}
           activeTab={activeTab}
           threadCounts={threadCounts}
@@ -979,7 +978,6 @@ export default function App() {
           onShowCommandBar={() => setShowCommandBar(true)}
           isInboxZero={isInboxZero}
           onCollapse={() => setSidebarCollapsed(true)}
-          allAccountSplits={allAccountSplits}
         />
       </Show>
 
