@@ -58,7 +58,6 @@ export const MAILBOX_DEFS: readonly MailboxDef[] = [
   { id: "bin", label: "Bin", query: "in:trash", emptyText: "Bin is empty" },
   { id: "spam", label: "Spam", query: "in:spam", emptyText: "No spam" },
   { id: "starred", label: "Starred", query: "is:starred", emptyText: "No starred emails" },
-  { id: "all", label: "All Mail", query: "-in:spam -in:trash", emptyText: "No emails" },
 ];
 
 export default function App() {
@@ -606,7 +605,6 @@ export default function App() {
       case "sent": openMailbox("sent"); break;
       case "drafts": openMailbox("drafts"); break;
       case "starred": openMailbox("starred"); break;
-      case "all": openMailbox("all"); break;
       case "bin":
       case "trash-folder": openMailbox("bin"); break;
       case "spam-folder": openMailbox("spam"); break;
@@ -785,7 +783,7 @@ export default function App() {
       clearTimeout(pendingGTimeout);
       const nav: Record<string, string | null> = {
         i: null, e: "done", t: "sent", d: "drafts",
-        b: "bin", s: "starred", a: "all",
+        b: "bin", s: "starred",
       };
       if (e.key === "!" || e.key in nav) {
         e.preventDefault();

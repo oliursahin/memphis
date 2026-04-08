@@ -40,7 +40,6 @@ const COMMANDS: Command[] = [
   { id: "drafts", label: "Go to Drafts", shortcut: "G D", section: "Navigation", icon: "file" },
   { id: "starred", label: "Go to Starred", shortcut: "G T", section: "Navigation", icon: "star" },
   { id: "done", label: "Go to Done", section: "Navigation", icon: "done" },
-  { id: "all", label: "Go to All Mail", section: "Navigation", icon: "mail" },
   { id: "spam-folder", label: "Go to Spam", section: "Navigation", icon: "spam" },
   { id: "trash-folder", label: "Go to Trash", section: "Navigation", icon: "trash" },
   { id: "settings", label: "Go to Settings", section: "Navigation", icon: "settings" },
