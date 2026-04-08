@@ -783,11 +783,13 @@ export default function App() {
       clearTimeout(pendingGTimeout);
       const nav: Record<string, string | null> = {
         i: null, e: "done", t: "sent", d: "drafts",
-        b: "bin", s: "starred",
+        b: "bin",
       };
-      if (e.key === "!" || e.key in nav) {
+      if (e.key === "!" || e.key === "*" || e.key === "s" || e.key in nav) {
         e.preventDefault();
         if (e.key === "!") { openMailbox("spam"); }
+        else if (e.key === "*") { openMailbox("starred"); }
+        else if (e.key === "s") { setShowSettings(true); }
         else if (nav[e.key] === null) { closeAllViews(); setActiveMailbox(null); }
         else { openMailbox(nav[e.key]!); }
         return;

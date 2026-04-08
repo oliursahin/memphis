@@ -207,8 +207,9 @@ function ShortcutsSection() {
     { keys: "G T", action: "Go to Sent" },
     { keys: "G D", action: "Go to Drafts" },
     { keys: "G B", action: "Go to Bin" },
-    { keys: "G S", action: "Go to Starred" },
+    { keys: "G *", action: "Go to Starred" },
     { keys: "G !", action: "Go to Spam" },
+    { keys: "G S", action: "Go to Settings" },
   ];
 
   return (

@@ -137,7 +137,7 @@ export default function Sidebar(props: SidebarProps) {
                       >
                         <For each={props.mailboxDefs}>
                           {(mb) => {
-                            const shortcutKey: Record<string, string> = { done: "E", sent: "T", drafts: "D", bin: "B", spam: "!", starred: "S" };
+                            const shortcutKey: Record<string, string> = { done: "E", sent: "T", drafts: "D", bin: "B", spam: "!", starred: "*" };
                             return (
                               <div
                                 on:click={(e: MouseEvent) => { e.stopPropagation(); props.onOpenMailbox(mb.id); setMenuOpenFor(null); }}
