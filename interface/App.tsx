@@ -82,6 +82,10 @@ export default function App() {
   // Track avatar load failures so we fall back to initials
   const [avatarFailed, setAvatarFailed] = createSignal(false);
 
+  // "g" prefix shortcut state — pressing "g" then a second key navigates to a mailbox
+  let pendingG = false;
+  let pendingGTimeout: ReturnType<typeof setTimeout> | undefined;
+
   // True when showing a split with no threads and nothing else open
   const isInboxZero = () =>
     threads().length === 0 && !loadingInbox() && !openThread() && !showCompose() && !showSettings() && !activeMailbox();
@@ -774,6 +778,32 @@ export default function App() {
 
     if (isInput) return;
     if (showCompose() || showSearch() || showCommandBar()) return;
+
+    // "g" prefix shortcuts — press g then a second key to navigate
+    if (pendingG) {
+      pendingG = false;
+      clearTimeout(pendingGTimeout);
+      const nav: Record<string, string | null> = {
+        i: null, e: "done", t: "sent", d: "drafts",
+        b: "bin", s: "starred", a: "all",
+      };
+      if (e.key === "!" || e.key in nav) {
+        e.preventDefault();
+        if (e.key === "!") { openMailbox("spam"); }
+        else if (nav[e.key] === null) { setActiveMailbox(null); }
+        else { openMailbox(nav[e.key]!); }
+        return;
+      }
+      // Unrecognised second key — fall through to normal handling
+    }
+
+    if (e.key === "g" && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      pendingG = true;
+      clearTimeout(pendingGTimeout);
+      pendingGTimeout = setTimeout(() => { pendingG = false; }, 1500);
+      return;
+    }
 
     switch (e.key) {
       case "j": e.preventDefault(); navigateThread(1); break;

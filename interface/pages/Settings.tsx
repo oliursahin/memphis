@@ -202,6 +202,14 @@ function ShortcutsSection() {
     { keys: "⇧ Tab", action: "Previous split" },
     { keys: "H", action: "Set reminder" },
     { keys: "?", action: "Show all shortcuts" },
+    { keys: "G I", action: "Go to Inbox" },
+    { keys: "G E", action: "Go to Done" },
+    { keys: "G T", action: "Go to Sent" },
+    { keys: "G D", action: "Go to Drafts" },
+    { keys: "G B", action: "Go to Bin" },
+    { keys: "G S", action: "Go to Starred" },
+    { keys: "G A", action: "Go to All Mail" },
+    { keys: "G !", action: "Go to Spam" },
   ];
 
   return (
