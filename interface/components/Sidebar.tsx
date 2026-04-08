@@ -1,4 +1,4 @@
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, createEffect, For, Show } from "solid-js";
 import type { AppAccount, MailboxDef } from "../App";
 import type { SplitConfig } from "../pages/SplitSetup";
 
@@ -27,6 +27,9 @@ export default function Sidebar(props: SidebarProps) {
   const iz = () => props.isInboxZero();
   const [menuOpenFor, setMenuOpenFor] = createSignal<string | null>(null);
   const [menuTop, setMenuTop] = createSignal(0);
+
+  // Close dropdown when navigating away (e.g. via keyboard shortcut)
+  createEffect(() => { props.activeMailbox(); setMenuOpenFor(null); });
   const [hoveredAcct, setHoveredAcct] = createSignal<string | null>(null);
   const [collapsedAccts, setCollapsedAccts] = createSignal<Set<string>>(new Set());
 
