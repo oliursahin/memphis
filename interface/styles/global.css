@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-body {
+html, body {
   margin: 0;
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -8,8 +8,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
   user-select: none;
-  background: #ffffff;
   color: #1a1a1a;
+}
+
+body {
+  background: #ffffff;
 }
 
 /* Compose editor — contenteditable */
