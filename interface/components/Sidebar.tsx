@@ -1,4 +1,5 @@
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, createEffect, For, Show } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 import type { AppAccount, MailboxDef } from "../App";
 import type { SplitConfig } from "../pages/SplitSetup";
 
@@ -8,7 +9,6 @@ interface SidebarProps {
   activeAccount: () => AppAccount | undefined;
   avatarFailed: () => boolean;
   onAvatarError: () => void;
-  onSwitchAccount: (id: string) => void;
   splits: () => SplitConfig[];
   activeTab: () => string;
   threadCounts: () => Record<string, number>;
@@ -18,17 +18,44 @@ interface SidebarProps {
   mailboxDefs: readonly MailboxDef[];
   onShowSearch: () => void;
   onShowCommandBar: () => void;
+  onShowSettings: () => void;
   isInboxZero: () => boolean;
   onCollapse: () => void;
-  allAccountSplits: () => Record<string, SplitConfig[]>;
 }
 
 export default function Sidebar(props: SidebarProps) {
   const iz = () => props.isInboxZero();
   const [menuOpenFor, setMenuOpenFor] = createSignal<string | null>(null);
   const [menuTop, setMenuTop] = createSignal(0);
+  const [editing, setEditing] = createSignal(false);
+  const [workspaceName, setWorkspaceName] = createSignal<string | null>(null);
+
+  // Close dropdown when navigating away (e.g. via keyboard shortcut)
+  createEffect(() => { props.activeMailbox(); setMenuOpenFor(null); });
   const [hoveredAcct, setHoveredAcct] = createSignal<string | null>(null);
-  const [collapsedAccts, setCollapsedAccts] = createSignal<Set<string>>(new Set());
+
+  // Load saved workspace name
+  createEffect(() => {
+    const id = props.activeAccountId();
+    if (!id) return;
+    const requestId = id;
+    invoke<string | null>("load_setting", { key: `workspace_name_${id}` })
+      .then((v) => {
+        if (props.activeAccountId() === requestId) setWorkspaceName(v);
+      })
+      .catch(() => {
+        if (props.activeAccountId() === requestId) setWorkspaceName(null);
+      });
+  });
+
+  const saveWorkspaceName = (name: string) => {
+    const id = props.activeAccountId();
+    if (!id) return;
+    const trimmed = name.trim();
+    const val = trimmed || null;
+    setWorkspaceName(val);
+    invoke("save_setting", { key: `workspace_name_${id}`, value: val ?? "" }).catch(console.error);
+  };
 
   return (
     <aside
@@ -51,18 +78,6 @@ export default function Sidebar(props: SidebarProps) {
 
       <div class="flex-1 w-full flex flex-col overflow-y-auto">
 
-        {/* ── Scratchpad (commented out) ── */}
-        {/* <div
-          onClick={() => { props.onOpenMailbox("drafts"); setMenuOpenFor(null); }}
-          class={`px-10 py-1.5 pb-3 cursor-pointer text-[13px] font-medium ${
-            props.activeMailbox() === "drafts"
-              ? iz() ? "text-white" : "text-zinc-900"
-              : iz() ? "text-white/50 hover:text-white/70" : "text-zinc-500 hover:text-zinc-700"
-          }`}
-        >
-          Scratchpad
-        </div> */}
-
         {/* ── Morphis ── */}
         <div
           class={`px-10 py-1.5 pb-3 text-[13px] font-medium ${
@@ -72,132 +87,146 @@ export default function Sidebar(props: SidebarProps) {
           morphis
         </div>
 
-        {/* ── Thin line ── */}
-        <div class={`mx-7 border-t ${iz() ? "border-white/10" : "border-zinc-200"}`} />
-
-        {/* ── Accounts with splits ── */}
-        <div class="mt-2">
-          <For each={props.accounts()}>
-            {(account) => {
-              const isActive = () => account.id === props.activeAccountId();
-              const prefix = () => account.email.split("@")[0] || account.email;
-              return (
-                <>
-                  {/* Account row with ≡ menu */}
-                  <div
-                    class={`flex items-center justify-between px-7 py-1.5 cursor-pointer text-[13px] font-medium ${
-                      isActive()
-                        ? iz() ? "text-white" : "text-zinc-900"
-                        : iz() ? "text-white/60 hover:text-white/80" : "text-zinc-700 hover:text-zinc-900"
-                    }`}
-                    onClick={() => {
-                      if (!isActive()) props.onSwitchAccount(account.id);
-                      setCollapsedAccts((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(account.id)) next.delete(account.id);
-                        else next.add(account.id);
-                        return next;
-                      });
-                    }}
-                    onMouseEnter={() => setHoveredAcct(account.id)}
-                    onMouseLeave={() => setHoveredAcct((v) => v === account.id ? null : v)}
-                  >
-                    <div class="flex items-center gap-1">
-                      <span
-                        on:click={(e: MouseEvent) => {
-                          e.stopPropagation();
-                          setCollapsedAccts((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(account.id)) next.delete(account.id);
-                            else next.add(account.id);
-                            return next;
-                          });
-                        }}
-                        class={`cursor-pointer transition-all ${
-                          iz() ? "text-white/30 hover:text-white/60" : "text-zinc-500 hover:text-zinc-600"
-                        }`}
-                        style={{
-                          transform: collapsedAccts().has(account.id) ? "rotate(-90deg)" : "rotate(0deg)",
-                          opacity: hoveredAcct() === account.id ? 1 : 0,
-                        }}
+        {/* ── Active account + splits (single workspace) ── */}
+        <Show when={props.activeAccount()}>
+          {(account) => {
+            const defaultName = () => account().email.split("@")[0] || account().email;
+            const displayName = () => workspaceName() || defaultName();
+            return (
+              <div class="mt-2">
+                {/* Workspace heading — click to edit, ≡ for mailbox menu */}
+                <div
+                  class={`flex items-center justify-between px-7 py-1.5 text-[13px] font-medium ${
+                    iz() ? "text-white" : "text-zinc-900"
+                  }`}
+                  onMouseEnter={() => setHoveredAcct(account().id)}
+                  onMouseLeave={() => setHoveredAcct((v) => v === account().id ? null : v)}
+                >
+                  <Show when={editing()} fallback={
+                    <span
+                      class="truncate cursor-text"
+                      onDblClick={() => setEditing(true)}
+                    >{displayName()}</span>
+                  }>
+                    <input
+                      type="text"
+                      class={`bg-transparent outline-none border-b text-[13px] font-medium w-full mr-2 ${
+                        iz() ? "text-white border-white/30" : "text-zinc-900 border-zinc-300"
+                      }`}
+                      value={displayName()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { saveWorkspaceName(e.currentTarget.value); setEditing(false); }
+                        if (e.key === "Escape") setEditing(false);
+                        e.stopPropagation();
+                      }}
+                      onBlur={(e) => { saveWorkspaceName(e.currentTarget.value); setEditing(false); }}
+                      ref={(el) => setTimeout(() => { el.focus(); el.select(); }, 0)}
+                    />
+                  </Show>
+                  <div class="relative">
+                    <span
+                      on:click={(e: MouseEvent) => { e.stopPropagation(); setMenuTop((e.currentTarget as HTMLElement).getBoundingClientRect().top); setMenuOpenFor((v) => v === account().id ? null : account().id); }}
+                      class={`cursor-pointer text-[18px] transition-opacity ${
+                        iz() ? "text-white/30 hover:text-white/60" : "text-zinc-500 hover:text-zinc-600"
+                      }`}
+                      style={{ opacity: hoveredAcct() === account().id || menuOpenFor() === account().id ? 1 : 0 }}
+                    >≡</span>
+                    <Show when={menuOpenFor() === account().id}>
+                      <div class="fixed inset-0 z-40" on:click={() => setMenuOpenFor(null)} />
+                      <div class={`fixed z-50 w-40 border py-1.5 ${
+                        iz() ? "bg-black/90 border-white/10" : "bg-[#FDFDFD] border-zinc-200"
+                      }`} style={{ left: "14rem", top: `${menuTop()}px` }}
                       >
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M4.5 3L7.5 6L4.5 9" />
-                        </svg>
-                      </span>
-                      <span>{prefix()}</span>
-                    </div>
-                    <div class="relative">
-                      <span
-                        on:click={(e: MouseEvent) => { e.stopPropagation(); setMenuTop((e.currentTarget as HTMLElement).getBoundingClientRect().top); setMenuOpenFor((v) => v === account.id ? null : account.id); }}
-                        class={`cursor-pointer text-[18px] transition-opacity ${
-                          iz() ? "text-white/30 hover:text-white/60" : "text-zinc-500 hover:text-zinc-600"
-                        }`}
-                        style={{ opacity: hoveredAcct() === account.id || menuOpenFor() === account.id ? 1 : 0 }}
-                      >≡</span>
-                      <Show when={menuOpenFor() === account.id}>
-                        <div class="fixed inset-0 z-40" on:click={() => setMenuOpenFor(null)} />
-                        <div class={`fixed z-50 w-40 border py-1.5 ${
-                          iz() ? "bg-black/90 border-white/10" : "bg-[#FDFDFD] border-zinc-200"
-                        }`} style={{ left: "14rem", top: `${menuTop()}px` }}
-                        >
-                          <For each={props.mailboxDefs}>
-                            {(mb) => (
+                        <For each={props.mailboxDefs}>
+                          {(mb) => {
+                            const shortcutKey: Record<string, string> = { done: "E", sent: "T", drafts: "D", bin: "B", spam: "!", starred: "*" };
+                            return (
                               <div
-                                on:click={(e: MouseEvent) => { e.stopPropagation(); if (!isActive()) props.onSwitchAccount(account.id); props.onOpenMailbox(mb.id); setMenuOpenFor(null); }}
-                                class={`px-4 py-1.5 text-[13px] font-medium cursor-pointer transition-colors ${
+                                on:click={(e: MouseEvent) => { e.stopPropagation(); props.onOpenMailbox(mb.id); setMenuOpenFor(null); }}
+                                class={`flex items-center justify-between px-4 py-1.5 text-[13px] font-medium cursor-pointer transition-colors ${
                                   props.activeMailbox() === mb.id
                                     ? iz() ? "text-white" : "text-zinc-900"
                                     : iz() ? "text-zinc-300 hover:text-zinc-100" : "text-zinc-500 hover:text-zinc-800"
                                 }`}
                               >
-                                {mb.label}
+                                <span>{mb.label}</span>
+                                <Show when={shortcutKey[mb.id]}>
+                                  <kbd class={`text-[10px] font-mono ml-3 ${iz() ? "text-white/30" : "text-zinc-400"}`}>
+                                    G {shortcutKey[mb.id]}
+                                  </kbd>
+                                </Show>
                               </div>
-                            )}
-                          </For>
-                        </div>
-                      </Show>
-                    </div>
+                            );
+                          }}
+                        </For>
+                      </div>
+                    </Show>
                   </div>
+                </div>
 
-                  {/* Splits — collapsible per account */}
-                  <Show when={!collapsedAccts().has(account.id)}>
-                    <For each={isActive() ? props.splits() : (props.allAccountSplits()[account.id] ?? [])}>
-                      {(split) => {
-                        const isSplitActive = () => isActive() && props.activeTab() === split.id && !props.activeMailbox();
-                        const count = () => isActive() ? (props.threadCounts()[split.id] ?? 0) : 0;
-                        return (
-                          <div
-                            onClick={() => {
-                              if (!isActive()) props.onSwitchAccount(account.id);
-                              props.onLoadSplit(split.id);
-                            }}
-                            class={`flex items-center justify-between pl-10 pr-7 py-1 cursor-pointer text-[13px] font-medium ${
-                              isSplitActive()
-                                ? iz() ? "text-white" : "text-zinc-900"
-                                : iz() ? "text-white/50 hover:text-white/70" : "text-zinc-500 hover:text-zinc-700"
-                            }`}
-                          >
-                            <span class="truncate">{split.name}</span>
-                            <Show when={count() > 0}>
-                              <span class={`text-[11px] tabular-nums flex-shrink-0 ${
-                                iz() ? "text-white/40" : "text-zinc-400"
-                              }`}>
-                                {count()}
-                              </span>
-                            </Show>
-                          </div>
-                        );
-                      }}
-                    </For>
-                  </Show>
-                </>
-              );
-            }}
-          </For>
-        </div>
+                {/* Splits for active account only */}
+                <For each={props.splits()}>
+                  {(split) => {
+                    const isSplitActive = () => props.activeTab() === split.id && !props.activeMailbox();
+                    const count = () => props.threadCounts()[split.id] ?? 0;
+                    return (
+                      <div
+                        onClick={() => props.onLoadSplit(split.id)}
+                        class={`flex items-center justify-between pl-10 pr-7 py-1 cursor-pointer text-[13px] font-medium ${
+                          isSplitActive()
+                            ? iz() ? "text-white" : "text-zinc-900"
+                            : iz() ? "text-white/50 hover:text-white/70" : "text-zinc-500 hover:text-zinc-700"
+                        }`}
+                      >
+                        <span class="truncate">{split.name}</span>
+                        <Show when={count() > 0}>
+                          <span class={`text-[11px] tabular-nums flex-shrink-0 ${
+                            iz() ? "text-white/40" : "text-zinc-400"
+                          }`}>
+                            {count()}
+                          </span>
+                        </Show>
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
+            );
+          }}
+        </Show>
 
         <div class="flex-1" />
+      </div>
+
+      {/* ── Bottom bar — Search, Command bar, Settings ── */}
+      <div class="flex-shrink-0 px-5 py-3 space-y-0.5">
+        <div
+          onClick={props.onShowSearch}
+          class={`flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer text-[13px] ${
+            iz() ? "text-white/50 hover:text-white/70" : "text-zinc-500 hover:text-zinc-700"
+          }`}
+        >
+          <span>Search</span>
+          <kbd class={`text-[10px] font-mono ${iz() ? "text-white/25" : "text-zinc-400"}`}>/</kbd>
+        </div>
+        <div
+          onClick={props.onShowCommandBar}
+          class={`flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer text-[13px] ${
+            iz() ? "text-white/50 hover:text-white/70" : "text-zinc-500 hover:text-zinc-700"
+          }`}
+        >
+          <span>Command</span>
+          <kbd class={`text-[10px] font-mono ${iz() ? "text-white/25" : "text-zinc-400"}`}>⌘K</kbd>
+        </div>
+        <div
+          onClick={props.onShowSettings}
+          class={`flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer text-[13px] ${
+            iz() ? "text-white/50 hover:text-white/70" : "text-zinc-500 hover:text-zinc-700"
+          }`}
+        >
+          <span>Settings</span>
+          <kbd class={`text-[10px] font-mono ${iz() ? "text-white/25" : "text-zinc-400"}`}>G S</kbd>
+        </div>
       </div>
     </aside>
   );
