@@ -12,7 +12,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(data_dir: PathBuf) -> Result<Self, crate::error::Error> {
-        let db_path = data_dir.join("memphis.db");
+        let db_path = data_dir.join("morphis.db");
         std::fs::create_dir_all(&data_dir)?;
 
         let conn = Connection::open(&db_path)?;

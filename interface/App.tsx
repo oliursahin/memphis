@@ -1,13 +1,17 @@
-import { createSignal, createMemo, onMount, onCleanup, For, Show } from "solid-js";
+import { createSignal, createMemo, onMount, onCleanup, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import ThreadView from "./pages/Thread";
 import ComposeView from "./pages/Compose";
+import MailboxView from "./pages/Mailbox";
 import SearchPalette from "./components/SearchPalette";
 import CommandPalette from "./components/CommandPalette";
 import LabelPicker from "./components/LabelPicker";
+import Sidebar from "./components/Sidebar";
+import HeaderBar from "./components/HeaderBar";
+import ContactSidebar from "./components/ContactSidebar";
 import Inbox from "./pages/Inbox";
 import type { ThreadRow } from "./pages/Inbox";
 import Settings from "./pages/Settings";
@@ -21,13 +25,20 @@ interface InboxZeroPhoto {
   photographerUrl: string;
 }
 
-interface AppAccount {
+export interface AppAccount {
   id: string;
   email: string;
   displayName: string | null;
   avatarUrl: string | null;
   provider: string;
   isActive: boolean;
+}
+
+export interface MailboxDef {
+  id: string;
+  label: string;
+  query: string;
+  emptyText: string;
 }
 
 interface OpenThread {
@@ -40,23 +51,14 @@ interface InboxResponse {
   nextPageToken: string | null;
 }
 
-const MAILBOX_DEFS = [
+export const MAILBOX_DEFS: readonly MailboxDef[] = [
   { id: "done", label: "Done", query: "-in:inbox -in:trash -in:spam", emptyText: "No archived emails" },
   { id: "sent", label: "Sent", query: "in:sent", emptyText: "No sent emails" },
   { id: "drafts", label: "Drafts", query: "in:drafts", emptyText: "No drafts" },
   { id: "bin", label: "Bin", query: "in:trash", emptyText: "Bin is empty" },
   { id: "spam", label: "Spam", query: "in:spam", emptyText: "No spam" },
   { id: "starred", label: "Starred", query: "is:starred", emptyText: "No starred emails" },
-  { id: "all", label: "All Mail", query: "-in:spam -in:trash", emptyText: "No emails" },
-] as const;
-
-function getInitials(account: AppAccount): string {
-  const name = account.displayName || account.email.split("@")[0];
-  const parts = name.trim().split(/\s+/);
-  return parts.length >= 2
-    ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-    : name.slice(0, 2).toUpperCase();
-}
+];
 
 export default function App() {
   const [authed, setAuthed] = createSignal<boolean | null>(null); // null = loading
@@ -64,6 +66,7 @@ export default function App() {
   const [activeAccountId, setActiveAccountId] = createSignal<string | null>(null);
   const [needsSetup, setNeedsSetup] = createSignal(false);
   const [splits, setSplits] = createSignal<SplitConfig[]>([]);
+  const [allAccountSplits, setAllAccountSplits] = createSignal<Record<string, SplitConfig[]>>({});
 
   // Per-split thread cache — switching tabs is instant
   const [splitThreads, setSplitThreads] = createSignal<Record<string, ThreadRow[]>>({});
@@ -77,6 +80,10 @@ export default function App() {
 
   // Track avatar load failures so we fall back to initials
   const [avatarFailed, setAvatarFailed] = createSignal(false);
+
+  // "g" prefix shortcut state — pressing "g" then a second key navigates to a mailbox
+  let pendingG = false;
+  let pendingGTimeout: ReturnType<typeof setTimeout> | undefined;
 
   // True when showing a split with no threads and nothing else open
   const isInboxZero = () =>
@@ -99,12 +106,12 @@ export default function App() {
   const [lastDraftData, setLastDraftData] = createSignal<{ to: string; subject: string; body: string; bodyHtml?: string; cc?: string; bcc?: string } | null>(null); // stash draft data for re-opening
   const [labelPickerMode, setLabelPickerMode] = createSignal<"apply-label" | "remove-label" | "move-to" | null>(null);
   const [showSearch, setShowSearch] = createSignal(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [showCommandBar, setShowCommandBar] = createSignal(false);
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
   const [inlineReply, setInlineReply] = createSignal(false);
   const [replyAll, setReplyAll] = createSignal(false);
   const [showSettings, setShowSettings] = createSignal(false);
-  const [showAccountPicker, setShowAccountPicker] = createSignal(false);
 
   // Auto-update state
   const [updateAvailable, setUpdateAvailable] = createSignal<{ version: string; install: () => Promise<void> } | null>(null);
@@ -177,6 +184,7 @@ export default function App() {
     const isStale = saved.length === 0 || savedVersion !== SPLITS_VERSION;
     if (!isStale) {
       setSplits(saved);
+      setAllAccountSplits((prev) => ({ ...prev, [accountId]: saved }));
       setActiveTab(saved[0].id);
       setSplitThreads({});
       loadAllSplits();
@@ -199,6 +207,15 @@ export default function App() {
         if (!accountId) return;
         const needsSetupNow = await loadSplitsForAccount(accountId);
         if (needsSetupNow) setNeedsSetup(true);
+        // Pre-load splits for all other accounts so sidebar shows them
+        for (const acct of accounts()) {
+          if (acct.id !== accountId) {
+            const saved = await invoke<SplitConfig[]>("get_splits", { accountId: acct.id }).catch(() => []);
+            if (saved.length > 0) {
+              setAllAccountSplits((prev) => ({ ...prev, [acct.id]: saved }));
+            }
+          }
+        }
       }
     } catch {
       setAuthed(false);
@@ -344,6 +361,11 @@ export default function App() {
   const loadSplit = (splitId: string) => {
     setActiveTab(splitId);
     setActiveMailbox(null);
+    setOpenThread(null);
+    setInlineReply(false);
+    setReplyAll(false);
+    setShowCompose(false);
+    setShowSettings(false);
   };
 
   // Unified mailbox prefetch
@@ -438,10 +460,16 @@ export default function App() {
   const navigateThread = (direction: 1 | -1) => {
     const ids = threadIds();
     if (ids.length === 0) return;
-    const current = selectedId();
+    const current = openThread()?.id ?? selectedId();
     const idx = current ? ids.indexOf(current) : -1;
     const next = idx + direction;
-    if (next >= 0 && next < ids.length) selectAndOpen(ids[next]);
+    if (next >= 0 && next < ids.length) {
+      if (openThread()) {
+        selectAndOpen(ids[next]);
+      } else {
+        setSelectedId(ids[next]);
+      }
+    }
   };
 
   // Unified archive/trash: optimistic UI removal + Gmail API call
@@ -516,6 +544,7 @@ export default function App() {
     const tab = activeTab();
     setComposeSplitId(tab);
     setComposeInitial(opts ?? null);
+    setOpenThread(null);
     setShowCompose(true);
 
     // Insert placeholder draft entry into the split right now
@@ -587,7 +616,6 @@ export default function App() {
       case "sent": openMailbox("sent"); break;
       case "drafts": openMailbox("drafts"); break;
       case "starred": openMailbox("starred"); break;
-      case "all": openMailbox("all"); break;
       case "bin":
       case "trash-folder": openMailbox("bin"); break;
       case "spam-folder": openMailbox("spam"); break;
@@ -724,29 +752,59 @@ export default function App() {
       if (target && target.id !== activeAccountId()) {
         e.preventDefault();
         switchAccount(target.id);
-        setShowAccountPicker(false);
       }
       return;
     }
 
     if (e.key === "Tab") {
       e.preventDefault();
-      const s = splits();
-      const tabIds = s.length > 0 ? s.map((sp) => sp.id) : ["inbox"];
-      const idx = tabIds.indexOf(activeTab());
+      const currentSplits = splits();
+      if (currentSplits.length === 0) return;
+      const idx = currentSplits.findIndex((s) => s.id === activeTab());
+      const currentIdx = idx === -1 ? 0 : idx;
       const nextIdx = e.shiftKey
-        ? (idx - 1 + tabIds.length) % tabIds.length
-        : (idx + 1) % tabIds.length;
-      loadSplit(tabIds[nextIdx]);
+        ? (currentIdx - 1 + currentSplits.length) % currentSplits.length
+        : (currentIdx + 1) % currentSplits.length;
+      loadSplit(currentSplits[nextIdx].id);
       return;
     }
 
     if (isInput) return;
     if (showCompose() || showSearch() || showCommandBar()) return;
 
+    // "g" prefix shortcuts — press g then a second key to navigate
+    if (pendingG) {
+      pendingG = false;
+      clearTimeout(pendingGTimeout);
+      const nav: Record<string, string | null> = {
+        i: null, e: "done", t: "sent", d: "drafts",
+        b: "bin",
+      };
+      if (e.key === "!" || e.key === "*" || e.key === "s" || e.key in nav) {
+        e.preventDefault();
+        if (e.key === "!") { openMailbox("spam"); }
+        else if (e.key === "*") { openMailbox("starred"); }
+        else if (e.key === "s") { setShowSettings(true); }
+        else if (nav[e.key] === null) { closeAllViews(); setActiveMailbox(null); }
+        else { openMailbox(nav[e.key]!); }
+        return;
+      }
+      // Unrecognised second key — fall through to normal handling
+    }
+
+    if (e.key === "g" && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      pendingG = true;
+      clearTimeout(pendingGTimeout);
+      pendingGTimeout = setTimeout(() => { pendingG = false; }, 1500);
+      return;
+    }
+
     switch (e.key) {
-      case "j": e.preventDefault(); navigateThread(1); break;
-      case "k": e.preventDefault(); navigateThread(-1); break;
+      case "j":
+      case "ArrowDown": e.preventDefault(); navigateThread(1); break;
+      case "k":
+      case "ArrowUp": e.preventDefault(); navigateThread(-1); break;
       case "Enter":
         e.preventDefault();
         if (!openThread() && selectedId()) selectAndOpen(selectedId()!);
@@ -867,7 +925,7 @@ export default function App() {
       <Show when={updateAvailable()}>
         {(update) => (
           <div class="absolute top-0 left-0 right-0 z-50 flex items-center justify-center gap-3 bg-black text-white text-[13px] py-2 px-4">
-            <span>Memphis {update().version} is available</span>
+            <span>Morphis {update().version} is available</span>
             <button
               onClick={() => update().install()}
               disabled={updateInstalling()}
@@ -898,101 +956,54 @@ export default function App() {
         </a>
       </Show>
 
-      {/* ── Sidebar — transparent when inbox zero ── */}
-      <aside class={`group/sidebar w-14 flex-shrink-0 flex flex-col items-center select-none relative z-10 transition-colors ${isInboxZero() ? "" : "bg-white"}`}>
-        {/* Traffic light spacing — no border here */}
-        <div class="h-12 flex-shrink-0" data-tauri-drag-region />
-
-        {/* Border starts below traffic lights, runs to bottom */}
-        <div class={`flex-1 w-full flex flex-col items-center ${isInboxZero() ? "" : "border-r border-zinc-200/60"}`}>
-          {/* Account switcher — show active avatar, click to expand picker */}
-          <div class="mt-1 flex flex-col items-center">
-            <div
-              class={`w-6 h-6 rounded-full overflow-hidden border flex items-center justify-center text-[9px] font-medium cursor-pointer transition-colors ${
-                isInboxZero()
-                  ? "border-white text-white bg-white/20"
-                  : "border-zinc-800 text-zinc-800 bg-zinc-100"
-              }`}
-              title={activeAccount()?.email ?? "Switch account"}
-              onClick={() => setShowAccountPicker((v) => !v)}
-            >
-              <Show when={activeAccount()?.avatarUrl && !avatarFailed()}>
-                <img
-                  src={activeAccount()!.avatarUrl!}
-                  alt=""
-                  class="w-full h-full object-cover"
-                  onError={() => setAvatarFailed(true)}
-                />
-              </Show>
-              <Show when={activeAccount() && (!activeAccount()?.avatarUrl || avatarFailed())}>
-                <span>{String(getInitials(activeAccount()!))}</span>
-              </Show>
-            </div>
-          </div>
-          {/* Mailbox shortcuts — visible on sidebar hover */}
-          <div class="mt-3 flex flex-col items-center space-y-3 opacity-0 group-hover/sidebar:opacity-100 transition-opacity"
-            style="transition-duration: 150ms"
-          >
-            <SidebarIcon icon="done" label="done" onClick={() => openMailbox("done")} light={isInboxZero()} />
-            <SidebarIcon icon="sent" label="sent" onClick={() => openMailbox("sent")} light={isInboxZero()} />
-            <SidebarIcon icon="drafts" label="drafts" onClick={() => openMailbox("drafts")} light={isInboxZero()} />
-            <SidebarIcon icon="bin" label="bin" onClick={() => openMailbox("bin")} light={isInboxZero()} />
-            <SidebarIcon icon="spam" label="spam" onClick={() => openMailbox("spam")} light={isInboxZero()} />
-          </div>
-          <div class="flex-1" />
-          {/* Search & config — always visible */}
-          <div class="pb-4 space-y-3">
-            <ShortcutHint hotkey="/" label="search" onClick={() => setShowSearch(true)} light={isInboxZero()} />
-            <ShortcutHint hotkey="⌘K" label="config" onClick={() => setShowCommandBar(true)} light={isInboxZero()} />
-          </div>
-        </div>
-      </aside>
+      {/* ── Sidebar ── */}
+      <Show when={!sidebarCollapsed()}>
+        <Sidebar
+          accounts={accounts}
+          activeAccountId={activeAccountId}
+          activeAccount={activeAccount}
+          avatarFailed={avatarFailed}
+          onAvatarError={() => setAvatarFailed(true)}
+          splits={splits}
+          activeTab={activeTab}
+          threadCounts={threadCounts}
+          onLoadSplit={loadSplit}
+          activeMailbox={activeMailbox}
+          onOpenMailbox={openMailbox}
+          mailboxDefs={MAILBOX_DEFS}
+          isInboxZero={isInboxZero}
+          onCollapse={() => setSidebarCollapsed(true)}
+        />
+      </Show>
 
       {/* ── Main content ── */}
-      <div class={`flex-1 flex flex-col min-w-0 relative z-10 ${isInboxZero() ? "" : "bg-white"}`}>
-        {/* Nav: drag region + split inbox tabs (hidden when thread/compose open) */}
-        <div class="flex-shrink-0" data-tauri-drag-region>
-          <div class="h-10" data-tauri-drag-region />
-          <Show when={!openThread() && !showCompose() && !showSettings() && !activeMailbox()}>
-            <div class="flex items-center gap-0 px-20 pb-0" data-tauri-drag-region>
-              <For each={splits().length > 0
-                ? splits().map((s) => ({ id: s.id, label: s.name, gmailLabelId: s.gmailLabelId, query: s.query }))
-                : [{ id: "inbox", label: "Inbox", gmailLabelId: undefined as string | undefined, query: undefined as string | undefined }]
-              }>
-                {(tab, i) => {
-                  const count = () => threadCounts()[tab.id] ?? 0;
-                  return (
-                    <button
-                      onClick={() => loadSplit(tab.id)}
-                      class={`relative py-2.5 text-[14px] transition-colors ${i() === 0 ? "pr-3" : "px-3"} ${
-                        activeTab() === tab.id
-                          ? isInboxZero() ? "text-white font-medium" : "text-zinc-900 font-medium"
-                          : isInboxZero() ? "text-white/60 hover:text-white/80" : "text-zinc-400 hover:text-zinc-600"
-                      }`}
-                    >
-                      {tab.label}
-                      <Show when={count() > 0}>
-                        <span class={`ml-1.5 text-[12px] tabular-nums ${
-                          isInboxZero()
-                            ? activeTab() === tab.id ? "text-white/70" : "text-white/50"
-                            : activeTab() === tab.id ? "text-zinc-500" : "text-zinc-400"
-                        }`}>
-                          {count()}
-                        </span>
-                      </Show>
-                    </button>
-                  );
-                }}
-              </For>
-            </div>
-          </Show>
-        </div>
+      <div class={`flex-1 flex min-w-0 relative z-10 ${isInboxZero() ? "" : "bg-white"}`}>
+      <div class="flex-1 flex flex-col min-w-0">
+        <HeaderBar
+          activeAccount={activeAccount}
+          activeTab={activeTab}
+          activeMailbox={activeMailbox}
+          openThread={openThread}
+          showCompose={showCompose}
+          showSettings={showSettings}
+          splits={splits}
+          mailboxDefs={MAILBOX_DEFS}
+          onBack={() => {
+            if (showCompose()) { setShowCompose(false); return; }
+            if (showSettings()) { setShowSettings(false); return; }
+            if (openThread()) { setOpenThread(null); setInlineReply(false); setReplyAll(false); return; }
+            if (activeMailbox()) { setActiveMailbox(null); return; }
+          }}
+          isInboxZero={isInboxZero}
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+        />
 
         <div class="flex-1 relative overflow-hidden">
           <Show when={showSettings()} fallback={
+          <Show when={openThread()} fallback={
           <Show when={activeMailbox()} fallback={
           <Show when={showCompose()} fallback={
-            <Show when={openThread()} fallback={
               <Inbox
                 threads={threads()}
                 loading={loadingInbox()}
@@ -1006,26 +1017,6 @@ export default function App() {
                   openCompose(draft ?? undefined);
                 }}
               />
-            }>
-              {(thread) => (
-                <div class="flex h-full">
-                  <div class="flex-1 min-w-0">
-                    <ThreadView
-                      threadId={thread().id}
-                      subject={thread().subject}
-                      onBack={() => { setOpenThread(null); setInlineReply(false); setReplyAll(false); }}
-                      replyOpen={inlineReply()}
-                      replyAll={replyAll()}
-                      onReplyOpen={() => setInlineReply(true)}
-                      onReplyClose={() => { setInlineReply(false); setReplyAll(false); }}
-                    />
-                  </div>
-                  <div class="w-[260px] flex-shrink-0 overflow-y-auto">
-                    <ContactSidebar threadId={thread().id} threads={threads()} />
-                  </div>
-                </div>
-              )}
-            </Show>
           }>
             <ComposeView
               onClose={() => {
@@ -1109,7 +1100,6 @@ export default function App() {
                   emptyText={def().emptyText}
                   threads={mb().threads}
                   loading={mb().loading}
-                  onBack={() => setActiveMailbox(null)}
                   onOpenThread={(thread) => {
                     setSelectedId(thread.id);
                     setOpenThread({ id: thread.id, subject: thread.subject });
@@ -1124,6 +1114,19 @@ export default function App() {
             }}
           </Show>
           }>
+            {(thread) => (
+              <ThreadView
+                threadId={thread().id}
+                subject={thread().subject}
+                onBack={() => { setOpenThread(null); setInlineReply(false); setReplyAll(false); }}
+                replyOpen={inlineReply()}
+                replyAll={replyAll()}
+                onReplyOpen={() => setInlineReply(true)}
+                onReplyClose={() => { setInlineReply(false); setReplyAll(false); }}
+              />
+            )}
+          </Show>
+          }>
             <Settings
               onBack={() => setShowSettings(false)}
               onAccountsChanged={refreshAccounts}
@@ -1136,6 +1139,16 @@ export default function App() {
             />
           </Show>
         </div>
+      </div>
+
+      {/* ── Contact sidebar — spans full height, outside header column ── */}
+      <Show when={openThread()}>
+        {(thread) => (
+          <div class="w-[260px] flex-shrink-0 overflow-y-auto border-l border-zinc-200">
+            <ContactSidebar threadId={thread().id} threads={threads()} />
+          </div>
+        )}
+      </Show>
       </div>
 
       {/* ── Overlays ── */}
@@ -1167,246 +1180,8 @@ export default function App() {
       </Show>
     </div>
 
-    {/* Account picker dropdown — rendered outside sidebar to avoid overflow clipping */}
-    <Show when={showAccountPicker()}>
-      <div class="fixed inset-0 z-[100]" onClick={() => setShowAccountPicker(false)} />
-      <div class="fixed left-[58px] top-[52px] z-[101] bg-zinc-800 rounded-lg shadow-xl border border-zinc-700 py-2 w-64">
-        <div class="px-3 py-1.5 text-[11px] text-zinc-400 uppercase tracking-wider">Switch account</div>
-        <For each={accounts()}>
-          {(account) => {
-            const isActive = () => account.id === activeAccountId();
-            return (
-              <button
-                class={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors cursor-pointer ${
-                  isActive() ? "bg-zinc-700/50" : "hover:bg-zinc-700/30"
-                }`}
-                onClick={() => {
-                  if (!isActive()) switchAccount(account.id);
-                  setShowAccountPicker(false);
-                }}
-              >
-                <div class={`w-8 h-8 rounded-full overflow-hidden border flex-shrink-0 flex items-center justify-center text-[11px] font-medium ${
-                  isActive() ? "border-white/60 text-white" : "border-zinc-500 text-zinc-400"
-                }`}>
-                  {account.avatarUrl
-                    ? <img src={account.avatarUrl} alt="" class="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).replaceWith(document.createTextNode(getInitials(account))); }} />
-                    : getInitials(account)
-                  }
-                </div>
-                <span class={`text-[13px] truncate ${isActive() ? "text-white" : "text-zinc-300"}`}>
-                  {account.email}
-                </span>
-              </button>
-            );
-          }}
-        </For>
-      </div>
-    </Show>
-
     </Show>
     </Show>
     </Show>
-  );
-}
-
-/* ── Mailbox view ── */
-
-function MailboxView(props: {
-  label: string;
-  emptyText: string;
-  threads: ThreadRow[];
-  loading: boolean;
-  onBack: () => void;
-  onOpenThread: (thread: ThreadRow) => void;
-  onCompose?: () => void;
-}) {
-  return (
-    <div class="absolute inset-0 overflow-y-auto pt-3 pb-12">
-      <div class="flex items-center gap-2 px-20 mb-4">
-        <button onClick={props.onBack} class="text-zinc-400 hover:text-zinc-600 transition-colors">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10 12L6 8l4-4" />
-          </svg>
-        </button>
-        <span class="text-[15px] font-medium text-zinc-900">{props.label}</span>
-      </div>
-      <Show when={!props.loading} fallback={
-        <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading…</div>
-      }>
-      <Show when={props.threads.length > 0} fallback={
-        <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">{props.emptyText}</div>
-      }>
-        <For each={props.threads}>
-          {(thread) => (
-            <div
-              class="group flex items-center gap-3 px-20 py-2.5 cursor-pointer hover:bg-zinc-50"
-              onClick={() => {
-                if (thread.labelIds?.includes("DRAFT")) {
-                  props.onCompose?.();
-                  return;
-                }
-                props.onOpenThread(thread);
-              }}
-            >
-              <div class="w-40 flex-shrink-0 truncate">
-                <Show when={thread.labelIds?.includes("DRAFT")}>
-                  <span class="text-[13px] font-medium text-green-600 mr-1">Draft</span>
-                </Show>
-                <span class="text-[13px] text-zinc-500">
-                  {thread.labelIds?.includes("DRAFT") ? `to ${thread.fromName}` : thread.fromName}
-                </span>
-              </div>
-              <div class="flex-1 min-w-0 truncate">
-                <span class="text-[13px] text-zinc-400">{thread.subject}</span>
-              </div>
-              <div class="text-[12px] text-zinc-400 tabular-nums">{thread.date}</div>
-            </div>
-          )}
-        </For>
-      </Show>
-      </Show>
-    </div>
-  );
-}
-
-/* ── Sidebar icon ── */
-
-function SidebarIcon(props: { icon: string; label: string; onClick?: () => void; light?: boolean }) {
-  const icons: Record<string, () => any> = {
-    done: () => (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M3.5 8l3 3 6-6" />
-      </svg>
-    ),
-    sent: () => (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14 2L7 9" />
-        <path d="M14 2l-4 12-3-5-5-3z" />
-      </svg>
-    ),
-    drafts: () => (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M11 4H4a2 2 0 00-2 2v7a2 2 0 002 2h8a2 2 0 002-2V8" />
-        <path d="M10.5 1.5l2 2L8 8H6V6l4.5-4.5z" />
-      </svg>
-    ),
-    bin: () => (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4M12.67 4v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4" />
-      </svg>
-    ),
-    spam: () => (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <polygon points="5.24 1.33 10.76 1.33 14.67 5.24 14.67 10.76 10.76 14.67 5.24 14.67 1.33 10.76 1.33 5.24" />
-        <line x1="8" y1="5.33" x2="8" y2="8" />
-        <line x1="8" y1="10.67" x2="8.01" y2="10.67" />
-      </svg>
-    ),
-  };
-  const Icon = icons[props.icon];
-  return (
-    <button
-      onClick={props.onClick}
-      class="flex flex-col items-center gap-0.5 group cursor-pointer"
-    >
-      <div class={`w-7 h-7 rounded-md flex items-center justify-center transition-colors ${
-        props.light ? "text-white/70 group-hover:text-white" : "text-zinc-400 group-hover:text-zinc-600"
-      }`}>
-        {Icon ? <Icon /> : null}
-      </div>
-      <span class={`text-[9px] transition-colors ${
-        props.light ? "text-white/60 group-hover:text-white/80" : "text-zinc-400 group-hover:text-zinc-600"
-      }`}>{props.label}</span>
-    </button>
-  );
-}
-
-/* ── Shortcut hint ── */
-
-function ShortcutHint(props: { hotkey: string; label: string; onClick?: () => void; light?: boolean }) {
-  return (
-    <button
-      onClick={props.onClick}
-      class="flex flex-col items-center gap-0.5 group cursor-pointer"
-    >
-      <kbd class={`w-7 h-7 rounded-md border flex items-center justify-center text-[11px] font-mono transition-colors ${
-        props.light
-          ? "bg-transparent border-white/25 text-white/70 group-hover:border-white/40 group-hover:text-white"
-          : "bg-white border-zinc-200 text-zinc-400 shadow-sm group-hover:border-zinc-300 group-hover:text-zinc-600"
-      }`}>
-        {props.hotkey}
-      </kbd>
-      <span class={`text-[9px] transition-colors ${
-        props.light ? "text-white/60 group-hover:text-white/80" : "text-zinc-400 group-hover:text-zinc-600"
-      }`}>{props.label}</span>
-    </button>
-  );
-}
-
-/* ── Contact sidebar ── */
-
-function ContactSidebar(props: { threadId: string; threads: ThreadRow[] }) {
-  const thread = () => props.threads.find((t) => t.id === props.threadId);
-
-  // Build contact from thread data — other threads from same sender
-  const contact = () => {
-    const t = thread();
-    const name = t?.fromName ?? "Unknown";
-    const email = t?.fromEmail ?? "";
-    const senderThreads = props.threads
-      .filter((th) => th.fromEmail === email && th.id !== props.threadId)
-      .slice(0, 5)
-      .map((th) => ({ subject: th.subject, date: th.date }));
-    return { name, title: email, location: "", emails: senderThreads, links: [] as { label: string; url: string }[] };
-  };
-
-  return (
-    <div class="p-5 space-y-5">
-      {/* Contact header */}
-      <div class="flex items-start gap-3">
-        <div class="w-9 h-9 rounded-full bg-zinc-100 flex items-center justify-center text-[13px] font-medium text-zinc-500 flex-shrink-0">
-          {contact().name[0]?.toUpperCase()}
-        </div>
-        <div class="min-w-0">
-          <div class="text-[14px] font-medium text-zinc-800 truncate">{contact().name}</div>
-          <div class="text-[12px] text-zinc-400 truncate">{contact().title}</div>
-          <Show when={contact().location}>
-            <div class="text-[12px] text-zinc-400 mt-0.5">{contact().location}</div>
-          </Show>
-        </div>
-      </div>
-
-      {/* Mail section */}
-      <Show when={contact().emails.length > 0}>
-        <div>
-          <div class="text-[11px] font-medium text-zinc-400 uppercase tracking-wider mb-2">Mail</div>
-          <div class="space-y-1.5">
-            <For each={contact().emails}>
-              {(email) => (
-                <div class="text-[12px] text-zinc-500 truncate">
-                  {email.subject}
-                </div>
-              )}
-            </For>
-          </div>
-        </div>
-      </Show>
-
-      {/* Links section */}
-      <Show when={contact().links.length > 0}>
-        <div>
-          <div class="text-[11px] font-medium text-zinc-400 uppercase tracking-wider mb-2">Links</div>
-          <div class="space-y-1.5">
-            <For each={contact().links}>
-              {(link) => (
-                <a href={link.url} class="text-[12px] text-blue-500 hover:underline block truncate">
-                  {link.label}
-                </a>
-              )}
-            </For>
-          </div>
-        </div>
-      </Show>
-    </div>
   );
 }

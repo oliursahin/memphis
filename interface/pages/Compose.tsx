@@ -42,7 +42,7 @@ export default function ComposeView(props: ComposeViewProps) {
   const [sending, setSending] = createSignal(false);
   const [sendError, setSendError] = createSignal<string | null>(null);
   const [showSignature, setShowSignature] = createSignal(false);
-  const [signature, setSignature] = createSignal("Sent with Memphis · morphism.me");
+  const [signature, setSignature] = createSignal("Sent with morphis");
   const [signatureEnabled, setSignatureEnabled] = createSignal(true);
   const [toolbarPos, setToolbarPos] = createSignal<{ x: number; y: number } | null>(null);
   const [showLinkInput, setShowLinkInput] = createSignal(false);
@@ -142,7 +142,7 @@ export default function ComposeView(props: ComposeViewProps) {
     const rawHtml = getBodyHtml();
     const sentHtml = rawHtml
       ? hasSig
-        ? `${rawHtml}<br><br><hr style="border:none;border-top:1px solid #e4e4e7"><p style="color:#71717a">${signature().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</p>`
+        ? `${rawHtml}<br><br><hr style="border:none;border-top:1px solid #e4e4e7"><p style="color:#71717a">Sent with <a href="https://morphis.email" style="color:#71717a;text-decoration:underline">morphis</a></p>`
         : rawHtml
       : null;
 

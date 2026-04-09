@@ -31,7 +31,7 @@ export default function Inbox(props: InboxProps) {
   return (
     <div class="absolute inset-0 overflow-y-auto pt-3 pb-12">
       <Show when={!props.loading} fallback={
-        <div class="flex items-center justify-center h-32 text-[13px] text-zinc-400">Loading…</div>
+        <div class="flex items-center justify-center h-32 text-[13px] text-zinc-500">Loading…</div>
       }>
       <Show when={props.threads.length > 0}>
         <For each={props.threads}>
@@ -56,33 +56,33 @@ export default function Inbox(props: InboxProps) {
                     <Show when={thread.labelIds?.includes("DRAFT")}>
                       <span class="text-[14px] font-medium text-green-600 mr-1">Draft</span>
                     </Show>
-                    <span class={`text-[14px] ${!thread.isRead ? "font-semibold text-zinc-900" : "text-zinc-500"}`}>
+                    <span class={`text-[14px] ${!thread.isRead ? "font-semibold text-zinc-900" : "text-zinc-600"}`}>
                       {thread.labelIds?.includes("DRAFT") ? `to ${thread.fromName}` : thread.fromName}
                     </span>
                     <Show when={thread.messageCount > 1 && !thread.labelIds?.includes("DRAFT")}>
-                      <span class="text-[12px] text-zinc-400 ml-1.5">{thread.messageCount}</span>
+                      <span class="text-[12px] text-zinc-500 ml-1.5">{thread.messageCount}</span>
                     </Show>
                   </div>
 
                   {/* Subject */}
                   <div class="flex-1 min-w-0 truncate">
-                    <span class={`text-[14px] ${!thread.isRead ? "font-medium text-zinc-800" : "text-zinc-500"}`}>
+                    <span class={`text-[14px] ${!thread.isRead ? "font-medium text-zinc-800" : "text-zinc-600"}`}>
                       {thread.subject}
                     </span>
                   </div>
 
                   {/* Date / hover actions — stacked in same space to prevent layout shift */}
                   <div class="relative w-[140px] flex-shrink-0 pl-3">
-                    <div class="flex justify-end text-[13px] text-zinc-400 tabular-nums group-hover:invisible">
+                    <div class="flex justify-end text-[13px] text-zinc-500 tabular-nums group-hover:invisible">
                       {thread.date}
                     </div>
                     <div class="absolute inset-0 flex items-center justify-end invisible group-hover:visible" onClick={(e) => e.stopPropagation()}>
-                    <button onClick={() => props.onArchive(thread.id)} class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Done (e)">
+                    <button onClick={() => props.onArchive(thread.id)} class="p-1.5 rounded-md text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Done (e)">
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M3.5 8l3 3 6-6" />
                       </svg>
                     </button>
-                    <button onClick={() => props.onTrash(thread.id)} class="p-1.5 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Trash (#)">
+                    <button onClick={() => props.onTrash(thread.id)} class="p-1.5 rounded-md text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100 transition-colors" title="Trash (#)">
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M2 4h12M5.33 4V2.67a1.33 1.33 0 011.34-1.34h2.66a1.33 1.33 0 011.34 1.34V4M12.67 4v9.33a1.33 1.33 0 01-1.34 1.34H4.67a1.33 1.33 0 01-1.34-1.34V4" />
                       </svg>

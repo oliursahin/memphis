@@ -8,7 +8,7 @@ mod search;
 mod state;
 mod sync;
 
-use tauri::Manager;
+use tauri::{Manager, WindowEvent};
 
 use state::AppState;
 use sync::engine::SyncEngine;
@@ -94,6 +94,13 @@ pub fn run() {
             commands::sync::trigger_sync,
             commands::unsplash::get_inbox_zero_photo,
         ])
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // Hide the window instead of quitting the app
+                api.prevent_close();
+                window.hide().unwrap();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
