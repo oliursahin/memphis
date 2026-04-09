@@ -361,6 +361,11 @@ export default function App() {
   const loadSplit = (splitId: string) => {
     setActiveTab(splitId);
     setActiveMailbox(null);
+    setOpenThread(null);
+    setInlineReply(false);
+    setReplyAll(false);
+    setShowCompose(false);
+    setShowSettings(false);
   };
 
   // Unified mailbox prefetch
