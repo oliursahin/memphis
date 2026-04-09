@@ -500,7 +500,7 @@ function EmailBody(props: { html: string }) {
     const doc = iframeRef?.contentDocument;
     if (doc?.body) {
       const h = doc.body.scrollHeight;
-      if (h > 0) setHeight(h + 4);
+      if (h > 0) setHeight(h + 2);
     }
   };
 
@@ -518,7 +518,7 @@ function EmailBody(props: { html: string }) {
 <style>
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 0;
+    margin: 0; padding: 0 0 8px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-size: 14px; line-height: 1.7; color: #27272a;
     word-break: break-word; overflow-wrap: break-word;
