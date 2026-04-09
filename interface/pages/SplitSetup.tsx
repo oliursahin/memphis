@@ -74,7 +74,7 @@ export default function SplitSetup(props: SplitSetupProps) {
       } else {
         // User-created label — use label ID as a query filter
         const label = labels().find((l) => l.id === id);
-        if (label) result.push({ id, name: label.name, query: `label:${label.name}` });
+        if (label) result.push({ id, name: label.name, gmailLabelId: label.id, query: `label:${label.name}` });
       }
     }
     props.onComplete(result);
