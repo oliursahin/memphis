@@ -758,30 +758,14 @@ export default function App() {
 
     if (e.key === "Tab") {
       e.preventDefault();
-      // Build flat list of all splits across all accounts
-      const allEntries: { accountId: string; splitId: string }[] = [];
-      for (const acct of accounts()) {
-        const acctSplits = acct.id === activeAccountId()
-          ? splits()
-          : (allAccountSplits()[acct.id] ?? []);
-        for (const sp of acctSplits) {
-          allEntries.push({ accountId: acct.id, splitId: sp.id });
-        }
-      }
-      if (allEntries.length === 0) return;
-      const rawIdx = allEntries.findIndex(
-        (entry) => entry.accountId === activeAccountId() && entry.splitId === activeTab()
-      );
-      const currentIdx = rawIdx === -1 ? 0 : rawIdx;
+      const currentSplits = splits();
+      if (currentSplits.length === 0) return;
+      const idx = currentSplits.findIndex((s) => s.id === activeTab());
+      const currentIdx = idx === -1 ? 0 : idx;
       const nextIdx = e.shiftKey
-        ? (currentIdx - 1 + allEntries.length) % allEntries.length
-        : (currentIdx + 1) % allEntries.length;
-      const next = allEntries[nextIdx];
-      if (next.accountId !== activeAccountId()) {
-        switchAccount(next.accountId).then(() => loadSplit(next.splitId));
-      } else {
-        loadSplit(next.splitId);
-      }
+        ? (currentIdx - 1 + currentSplits.length) % currentSplits.length
+        : (currentIdx + 1) % currentSplits.length;
+      loadSplit(currentSplits[nextIdx].id);
       return;
     }
 
