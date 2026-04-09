@@ -676,7 +676,15 @@ async fn extract_body(msg: &GmailMessage, client: &GmailClient) -> String {
     if let Some(data) = html {
         let decoded = decode_base64url(&data);
         if !decoded.is_empty() {
-            return sanitize_html(&decoded);
+            let mut sanitized = sanitize_html(&decoded);
+            // Resolve cid: references to inline data URIs
+            if sanitized.contains("cid:") {
+                let cid_map = collect_inline_images(payload, &msg.id, client).await;
+                for (cid, data_uri) in &cid_map {
+                    sanitized = sanitized.replace(&format!("cid:{cid}"), data_uri);
+                }
+            }
+            return sanitized;
         }
         log::warn!("HTML body decoded to empty for message {}", msg.id);
     }
@@ -800,10 +808,64 @@ fn sanitize_html(raw: &str) -> String {
         .add_tag_attributes("tr", &["style"])
         .add_tag_attributes("font", &["color", "size", "face"])
         .add_tags(&["table", "thead", "tbody", "tr", "td", "th", "font", "center", "hr", "br"])
+        .url_schemes(["http", "https", "mailto", "cid"].iter().copied().collect())
         .link_rel(Some("noopener noreferrer"))
         .url_relative(ammonia::UrlRelative::Deny)
         .clean(raw)
         .to_string()
+}
+
+/// Collect inline image parts (those with a Content-ID header and an image/* MIME type),
+/// returning a map from CID → data URI string.
+async fn collect_inline_images(
+    payload: &MessagePayload,
+    message_id: &str,
+    client: &GmailClient,
+) -> Vec<(String, String)> {
+    let mut results = Vec::new();
+    // Flatten all image parts with Content-ID using an iterative stack
+    let mut stack: Vec<&MessagePart> = Vec::new();
+    if let Some(parts) = &payload.parts {
+        stack.extend(parts.iter());
+    }
+    while let Some(part) = stack.pop() {
+        if let Some(sub) = &part.parts {
+            stack.extend(sub.iter());
+        }
+        let mime = part.mime_type.as_deref().unwrap_or("");
+        if !mime.starts_with("image/") {
+            continue;
+        }
+        let cid = part.headers.as_ref().and_then(|headers| {
+            headers.iter().find_map(|h| {
+                if h.name.eq_ignore_ascii_case("Content-ID") {
+                    Some(h.value.trim_matches(|c| c == '<' || c == '>').to_string())
+                } else {
+                    None
+                }
+            })
+        });
+        let cid = match cid {
+            Some(c) => c,
+            None => continue,
+        };
+        let data = if let Some(body) = &part.body {
+            if let Some(d) = &body.data {
+                if !d.is_empty() { Some(d.clone()) } else { None }
+            } else if let Some(aid) = &body.attachment_id {
+                client.get_attachment(message_id, aid).await.ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(b64_data) = data {
+            let standard_b64 = b64_data.replace('-', "+").replace('_', "/");
+            results.push((cid, format!("data:{mime};base64,{standard_b64}")));
+        }
+    }
+    results
 }
 
 /// Send a new email (not a reply).

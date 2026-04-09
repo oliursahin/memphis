@@ -526,7 +526,6 @@ function EmailBody(props: { html: string }) {
   }
   a { color: #3b82f6; }
   img { max-width: 100%; height: auto; }
-  img[src^="cid:"] { display: none; }
   table { max-width: 100%; font-size: 13px; }
   pre { white-space: pre-wrap; word-break: break-word; font-family: inherit; }
   blockquote { margin: 8px 0; padding-left: 12px; border-left: 2px solid #e4e4e7; color: #71717a; }
@@ -551,12 +550,8 @@ function EmailBody(props: { html: string }) {
       });
 
       doc.body.querySelectorAll("img").forEach((img) => {
-        if (img.src.startsWith("cid:")) {
-          img.remove();
-        } else {
-          img.addEventListener("load", resizeToContent);
-          img.addEventListener("error", () => img.remove());
-        }
+        img.addEventListener("load", resizeToContent);
+        img.addEventListener("error", () => img.remove());
       });
     }
   });
