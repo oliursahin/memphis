@@ -1,6 +1,6 @@
 // Rotating subtitle words
 const options = [
-  "yours",
+  "mine",
   "fast",
   "private",
   "keyboard-first",
