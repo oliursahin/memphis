@@ -293,6 +293,7 @@ pub struct MessagePayload {
 #[serde(rename_all = "camelCase")]
 pub struct MessagePart {
     pub mime_type: Option<String>,
+    pub headers: Option<Vec<Header>>,
     pub body: Option<MessageBody>,
     pub parts: Option<Vec<MessagePart>>,
 }
