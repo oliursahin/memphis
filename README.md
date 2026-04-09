@@ -2,6 +2,11 @@
 
 A lightweight, privacy-first email client for Gmail. All your data stays on your machine.
 
+Built with [Tauri](https://tauri.app), [SolidJS](https://www.solidjs.com), and [Tailwind CSS](https://tailwindcss.com).
+
+<p align="center">
+  <img src="assets/hero.gif" alt="morphis demo" width="800" />
+</p>
 
 ## Features
 
