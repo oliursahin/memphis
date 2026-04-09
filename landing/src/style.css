@@ -154,6 +154,45 @@ a {
   width: 100%;
 }
 
+/* Slideshow — CSS-only crossfade */
+.slideshow {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1200 / 800;
+}
+
+.slideshow .slide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  animation: fade 12s infinite;
+}
+
+.slideshow .slide:nth-child(1) { animation-delay: 0s; }
+.slideshow .slide:nth-child(2) { animation-delay: 4s; }
+.slideshow .slide:nth-child(3) { animation-delay: 8s; }
+
+@keyframes fade {
+  0%      { opacity: 0; }
+  8%      { opacity: 1; }
+  33%     { opacity: 1; }
+  42%     { opacity: 0; }
+  100%    { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slideshow .slide {
+    animation: none;
+  }
+  .slideshow .slide:first-child {
+    opacity: 1;
+  }
+}
+
 /* Sections */
 .section {
   margin: 3rem 0;
