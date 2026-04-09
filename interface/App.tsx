@@ -979,9 +979,6 @@ export default function App() {
           activeMailbox={activeMailbox}
           onOpenMailbox={openMailbox}
           mailboxDefs={MAILBOX_DEFS}
-          onShowSearch={() => setShowSearch(true)}
-          onShowCommandBar={() => setShowCommandBar(true)}
-          onShowSettings={() => setShowSettings(true)}
           isInboxZero={isInboxZero}
           onCollapse={() => setSidebarCollapsed(true)}
         />

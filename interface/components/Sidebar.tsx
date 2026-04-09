@@ -16,9 +16,6 @@ interface SidebarProps {
   activeMailbox: () => string | null;
   onOpenMailbox: (id: string) => void;
   mailboxDefs: readonly MailboxDef[];
-  onShowSearch: () => void;
-  onShowCommandBar: () => void;
-  onShowSettings: () => void;
   isInboxZero: () => boolean;
   onCollapse: () => void;
 }
@@ -198,36 +195,6 @@ export default function Sidebar(props: SidebarProps) {
         <div class="flex-1" />
       </div>
 
-      {/* ── Bottom bar — Search, Command bar, Settings ── */}
-      <div class="flex-shrink-0 px-5 py-3 space-y-0.5">
-        <div
-          onClick={props.onShowSearch}
-          class={`flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer text-[13px] ${
-            iz() ? "text-white/50 hover:text-white/70" : "text-zinc-500 hover:text-zinc-700"
-          }`}
-        >
-          <span>Search</span>
-          <kbd class={`text-[10px] font-mono ${iz() ? "text-white/25" : "text-zinc-400"}`}>/</kbd>
-        </div>
-        <div
-          onClick={props.onShowCommandBar}
-          class={`flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer text-[13px] ${
-            iz() ? "text-white/50 hover:text-white/70" : "text-zinc-500 hover:text-zinc-700"
-          }`}
-        >
-          <span>Command</span>
-          <kbd class={`text-[10px] font-mono ${iz() ? "text-white/25" : "text-zinc-400"}`}>⌘K</kbd>
-        </div>
-        <div
-          onClick={props.onShowSettings}
-          class={`flex items-center justify-between px-2 py-1.5 rounded-md cursor-pointer text-[13px] ${
-            iz() ? "text-white/50 hover:text-white/70" : "text-zinc-500 hover:text-zinc-700"
-          }`}
-        >
-          <span>Settings</span>
-          <kbd class={`text-[10px] font-mono ${iz() ? "text-white/25" : "text-zinc-400"}`}>G S</kbd>
-        </div>
-      </div>
     </aside>
   );
 }
