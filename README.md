@@ -19,11 +19,14 @@ A lightweight, privacy-first email client for Gmail. All your data stays on your
 
 
 
-
-
-
 <p align="center">
-  <img src="assets/hero.gif" alt="morphis demo" width="800" />
+  <img src="assets/hero-inbox.png" alt="morphis inbox" width="800" />
+</p>
+<p align="center">
+  <img src="assets/hero-search.png" alt="morphis search" width="800" />
+</p>
+<p align="center">
+  <img src="assets/hero-thread.png" alt="morphis thread view" width="800" />
 </p>
 
 ## Features
