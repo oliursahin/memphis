@@ -70,12 +70,12 @@ export default function ComposeView(props: ComposeViewProps) {
 
   const searchContacts = (query: string) => {
     if (suggestionTimer) clearTimeout(suggestionTimer);
+    const seq = ++searchSeq;
     if (query.length < 1) {
       setSuggestions([]);
       setShowSuggestions(false);
       return;
     }
-    const seq = ++searchSeq;
     suggestionTimer = window.setTimeout(async () => {
       try {
         const results = await invoke<{ name: string; email: string }[]>("search_contacts", { query });
